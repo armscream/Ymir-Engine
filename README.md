@@ -6,4 +6,4 @@ especially considering comp-time.
 
 Alpha intent: Feature-complete for 1.0 release, but not yet polished.
 
-Beta intent: Polished to the point of external developer satisfaction, at least one game shipped IOT exist beta.
+Beta intent: Polished to the point of external developer satisfaction, at least one game shipped IOT exit beta.
