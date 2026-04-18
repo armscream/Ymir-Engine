@@ -32,3 +32,10 @@ Alpha intent: Feature-complete Minimum-Viable-Product for 1.0 release, but not y
     more to follow...
 
 Beta intent: Polished to the point of external developer satisfaction, at least one game shipped IOT exit beta.
+
+Build helper script:
+
+- Use `build_from_game_config.ps1` to compile `App` and name the exe from `App/Config/game.json` `game_name`.
+- Output is written to `Build/<game_name>.exe`.
+- Example:
+  `./build_from_game_config.ps1`
