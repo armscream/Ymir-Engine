@@ -1,1 +1,1 @@
-{"renderer_backend":"SDL3","game_name":"Ymir Engine Test Game","window_width":1000,"window_height":600,"fullscreen":false,"current_level":"Levels/level_1_lvl.json","levels":["Levels/level_1_lvl.json","Levels/level_2_lvl.json"]}
+{"renderer_backend":"Software","game_name":"Ymir Engine Test Game","window_x":80,"window_y":141,"window_width":1105,"window_height":564,"fullscreen":false,"keybinds_path":"Config/keybindings.json","current_level":"Levels/level_1_lvl.json","levels":["Levels/level_1_lvl.json","Levels/level_2_lvl.json"]}
