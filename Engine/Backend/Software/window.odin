@@ -73,33 +73,36 @@ get_window_state :: proc(x, y, width, height: ^i32, fullscreen: ^bool) -> bool {
         return false
     }
 
+    got_any := false
+
     pos_x, pos_y: c.int
     w, h: c.int
-    if !sdl3.GetWindowPosition(window, &pos_x, &pos_y) {
-        return false
-    }
-    if !sdl3.GetWindowSize(window, &w, &h) {
-        return false
-    }
+    has_position := sdl3.GetWindowPosition(window, &pos_x, &pos_y)
+    has_size := sdl3.GetWindowSize(window, &w, &h)
 
-    if x != nil {
+    if x != nil && has_position {
         x^ = i32(pos_x)
+        got_any = true
     }
-    if y != nil {
+    if y != nil && has_position {
         y^ = i32(pos_y)
+        got_any = true
     }
-    if width != nil {
+    if width != nil && has_size {
         width^ = i32(w)
+        got_any = true
     }
-    if height != nil {
+    if height != nil && has_size {
         height^ = i32(h)
+        got_any = true
     }
     if fullscreen != nil {
         // SDL3 returns a display mode pointer when fullscreen is active.
         fullscreen^ = sdl3.GetWindowFullscreenMode(window) != nil
+        got_any = true
     }
 
-    return true
+    return got_any
 }
 
 shutdown_window :: proc() {
