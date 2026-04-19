@@ -37,6 +37,7 @@ Editor_Settings :: struct {
 Editor_Config_File :: struct {
 	editor_name: string,
 	app_config_directory_path: string,
+	ui_theme: string,
 	settings:    Editor_Settings,
 }
 
@@ -49,36 +50,127 @@ Ui_Render_Backend :: enum {
 	Software,
 }
 
+Ui_Theme :: enum {
+	Dark,
+	Light,
+	Light_Orange,
+	Terracotta,
+	Citrus_Sand,
+	Apricot_Paper,
+	Ocean_Mist,
+	Olive_Studio,
+}
+
+Ui_Theme_Font :: enum {
+	Default,
+	Inter,
+	Manrope,
+}
+
+UI_THEME_ORDER :: [8]Ui_Theme{
+	.Dark,
+	.Light,
+	.Terracotta,
+	.Light_Orange,
+	.Citrus_Sand,
+	.Apricot_Paper,
+	.Ocean_Mist,
+	.Olive_Studio,
+}
+
+UI_THEME_LABELS :: [8]cstring{
+	"Dark",
+	"Light",
+	"Terracotta",
+	"Light Orange",
+	"Citrus Sand (Manrope)",
+	"Apricot Paper (Inter)",
+	"Ocean Mist",
+	"Olive Studio",
+}
+
 Game_Renderer_Config :: struct {
 	renderer_backend: string,
 }
 
+Editor_Runtime_Core_State :: struct {
+	app_config_directory_path: string,
+}
+
+Editor_Runtime_Theme_State :: struct {
+	active_theme: Ui_Theme,
+	pending_theme: Ui_Theme,
+	theme_change_pending: bool,
+	clear_color: [4]f32,
+}
+
+Editor_Runtime_Directory_Tree_State :: struct {
+	selected_path: string,
+	selected_is_dir: bool,
+	show_png: bool,
+	show_skm: bool,
+	show_sm: bool,
+	show_mtl: bool,
+	hide_non_primary_root_dirs: bool,
+	create_folder_parent_path: string,
+	create_folder_error: string,
+	open_create_folder_popup: bool,
+	new_folder_name: [256]u8,
+	delete_folder_target_path: string,
+	delete_folder_open_modal: bool,
+}
+
+Editor_Runtime_Asset_Browser_State :: struct {
+	selected_asset_path: string,
+	error: string,
+	import_source_path: string,
+	import_open_modal: bool,
+	import_target_name: [256]u8,
+	delete_target_path: string,
+	delete_open_modal: bool,
+}
+
+Editor_Runtime_Directory_Cache_State :: struct {
+	paths: [dynamic]string,
+	entries: [dynamic][]os.File_Info,
+}
+
+Editor_Runtime_State :: struct {
+	core: Editor_Runtime_Core_State,
+	theme: Editor_Runtime_Theme_State,
+	directory_tree: Editor_Runtime_Directory_Tree_State,
+	asset_browser: Editor_Runtime_Asset_Browser_State,
+	directory_cache: Editor_Runtime_Directory_Cache_State,
+}
+
 active_ui_backend := Ui_Render_Backend.Undefined
-active_app_config_directory_path: string
+editor_runtime := Editor_Runtime_State{
+	theme = Editor_Runtime_Theme_State{
+		active_theme = .Olive_Studio,
+		pending_theme = .Olive_Studio,
+		clear_color = {1.00, 0.95, 0.88, 1.00},
+	},
+	directory_tree = Editor_Runtime_Directory_Tree_State{
+		show_png = true,
+		show_skm = true,
+		show_sm = true,
+		show_mtl = true,
+		hide_non_primary_root_dirs = true,
+	},
+}
 imgui_layout_path: string
-directory_tree_selected_path: string
-directory_tree_selected_is_dir: bool
-directory_tree_show_png: bool = true
-directory_tree_show_skm: bool = true
-directory_tree_show_sm: bool = true
-directory_tree_show_mtl: bool = true
-directory_tree_hide_non_primary_root_dirs: bool = true
-directory_tree_create_folder_parent_path: string
-directory_tree_create_folder_error: string
-directory_tree_open_create_folder_popup: bool
-directory_tree_new_folder_name: [256]u8
 force_default_layout_next_frame: bool
 
 @(private) active_game_config_path_label :: proc() -> string {
-	if active_app_config_directory_path == "" {
+	if editor_runtime.core.app_config_directory_path == "" {
 		return "<unknown game config path>"
 	}
 
-	if resolved := resolve_game_config_path(active_app_config_directory_path); resolved != "" {
+	if resolved := resolve_game_config_path(editor_runtime.core.app_config_directory_path); resolved != "" {
 		return resolved
 	}
 
-	return active_app_config_directory_path
+	return editor_runtime.core.app_config_directory_path
 }
 
 @(private) ui_backend_from_string :: proc(name: string) -> Ui_Render_Backend {
@@ -115,6 +207,252 @@ force_default_layout_next_frame: bool
 		return "Software"
 	}
 	return "Undefined"
+}
+
+@(private) ui_theme :: proc(theme: Ui_Theme) -> string {
+	switch theme {
+	case .Dark:
+		return "Dark"
+	case .Light:
+		return "Light"
+	case .Light_Orange:
+		return "Light Orange"
+	case .Terracotta:
+		return "Terracotta"
+	case .Citrus_Sand:
+		return "Citrus Sand"
+	case .Apricot_Paper:
+		return "Apricot Paper"
+	case .Ocean_Mist:
+		return "Ocean Mist"
+	case .Olive_Studio:
+		return "Olive Studio"
+	}
+	return "Olive Studio"
+}
+
+@(private) ui_theme_cstring :: proc(theme: Ui_Theme) -> cstring {
+	order := UI_THEME_ORDER
+	labels := UI_THEME_LABELS
+
+	for i in 0 ..< len(order) {
+		if order[i] == theme {
+			return labels[i]
+		}
+	}
+
+	return "Olive Studio"
+}
+
+@(private) ui_theme_from_string :: proc(name: string) -> Ui_Theme {
+	if name == "" {
+		return .Olive_Studio
+	}
+
+	lower, _ := strings.to_lower(name, context.temp_allocator)
+	if lower == "dark" {
+		return .Dark
+	}
+	if lower == "light" {
+		return .Light
+	}
+	if lower == "light orange" || lower == "light_orange" || lower == "light-orange" {
+		return .Light_Orange
+	}
+	if lower == "terracotta" {
+		return .Terracotta
+	}
+	if lower == "citrus sand" || lower == "citrus_sand" || lower == "citrus-sand" {
+		return .Citrus_Sand
+	}
+	if lower == "apricot paper" || lower == "apricot_paper" || lower == "apricot-paper" {
+		return .Apricot_Paper
+	}
+	if lower == "ocean mist" || lower == "ocean_mist" || lower == "ocean-mist" {
+		return .Ocean_Mist
+	}
+	if lower == "olive studio" || lower == "olive_studio" || lower == "olive-studio" {
+		return .Olive_Studio
+	}
+
+	return .Olive_Studio
+}
+
+@(private) set_ui_clear_color :: proc(r, g, b, a: f32) {
+	editor_runtime.theme.clear_color[0] = r
+	editor_runtime.theme.clear_color[1] = g
+	editor_runtime.theme.clear_color[2] = b
+	editor_runtime.theme.clear_color[3] = a
+}
+
+@(private) apply_ui_theme :: proc(theme: Ui_Theme, io: ^imgui.IO, rebuild_font_texture := true) {
+	editor_runtime.theme.active_theme = theme
+
+	switch theme {
+	case .Dark:
+		apply_dark_theme(io)
+	case .Light:
+		apply_light_theme(io)
+	case .Light_Orange:
+		apply_light_orange_theme(io)
+	case .Terracotta:
+		apply_terracotta_theme(io)
+	case .Citrus_Sand:
+		apply_citrus_sand_theme(io)
+	case .Apricot_Paper:
+		apply_apricot_paper_theme(io)
+	case .Ocean_Mist:
+		apply_ocean_mist_theme(io)
+	case .Olive_Studio:
+		apply_olive_studio_theme(io)
+	}
+
+	apply_theme_font_preset(theme, io, rebuild_font_texture)
+}
+
+@(private) queue_ui_theme_change :: proc(theme: Ui_Theme) {
+	if theme == editor_runtime.theme.active_theme {
+		return
+	}
+	editor_runtime.theme.pending_theme = theme
+	editor_runtime.theme.theme_change_pending = true
+}
+
+@(private) process_pending_ui_theme_change :: proc() {
+	if !editor_runtime.theme.theme_change_pending || imgui_context == nil {
+		return
+	}
+
+	apply_ui_theme(editor_runtime.theme.pending_theme, imgui.get_io())
+	editor_runtime.theme.theme_change_pending = false
+}
+
+@(private) resolve_theme_font :: proc(theme: Ui_Theme) -> Ui_Theme_Font {
+	switch theme {
+	case .Citrus_Sand:
+		return .Manrope
+	case .Apricot_Paper:
+		return .Inter
+	case .Dark, .Light, .Light_Orange, .Terracotta, .Ocean_Mist, .Olive_Studio:
+		return .Default
+	}
+	return .Default
+}
+
+@(private) apply_dark_theme :: proc(io: ^imgui.IO) {
+	imgui.style_colors_dark(nil)
+
+	style := imgui.get_style()
+	style.window_rounding = 7
+	style.child_rounding = 6
+	style.popup_rounding = 6
+	style.frame_rounding = 6
+	style.tab_rounding = 6
+	style.frame_padding = {10, 6}
+	style.window_padding = {10, 10}
+
+	style.colors[imgui.Col.Window_Bg] = {0.12, 0.13, 0.14, 1.00}
+	style.colors[imgui.Col.Child_Bg] = {0.15, 0.16, 0.18, 1.00}
+	style.colors[imgui.Col.Popup_Bg] = {0.14, 0.15, 0.17, 1.00}
+	style.colors[imgui.Col.Button] = {0.31, 0.39, 0.49, 0.80}
+	style.colors[imgui.Col.Button_Hovered] = {0.39, 0.48, 0.60, 0.95}
+	style.colors[imgui.Col.Button_Active] = {0.24, 0.31, 0.40, 1.00}
+	style.colors[imgui.Col.Header] = {0.30, 0.37, 0.46, 0.75}
+	style.colors[imgui.Col.Tab_Selected] = {0.40, 0.50, 0.62, 0.92}
+
+	io.font_global_scale = 1.04
+	set_ui_clear_color(0.10, 0.11, 0.12, 1.00)
+}
+
+@(private) apply_light_theme :: proc(io: ^imgui.IO) {
+	imgui.style_colors_light(nil)
+
+	style := imgui.get_style()
+	style.window_rounding = 7
+	style.child_rounding = 6
+	style.popup_rounding = 6
+	style.frame_rounding = 6
+	style.tab_rounding = 6
+	style.frame_padding = {10, 6}
+	style.window_padding = {10, 10}
+
+	style.colors[imgui.Col.Window_Bg] = {0.97, 0.97, 0.97, 1.00}
+	style.colors[imgui.Col.Child_Bg] = {0.94, 0.95, 0.96, 1.00}
+	style.colors[imgui.Col.Popup_Bg] = {0.95, 0.96, 0.97, 1.00}
+	style.colors[imgui.Col.Button] = {0.54, 0.63, 0.74, 0.78}
+	style.colors[imgui.Col.Button_Hovered] = {0.46, 0.56, 0.68, 0.92}
+	style.colors[imgui.Col.Button_Active] = {0.36, 0.46, 0.58, 1.00}
+	style.colors[imgui.Col.Header] = {0.65, 0.73, 0.81, 0.72}
+	style.colors[imgui.Col.Tab_Selected] = {0.48, 0.58, 0.70, 0.90}
+
+	io.font_global_scale = 1.04
+	set_ui_clear_color(0.97, 0.97, 0.97, 1.00)
+}
+
+@(private) add_font_from_candidates :: proc(io: ^imgui.IO, size_pixels: f32, candidates: []string) -> bool {
+	if io == nil || io.fonts == nil {
+		return false
+	}
+
+	for candidate in candidates {
+		if !os.exists(candidate) {
+			continue
+		}
+
+		path_c, alloc_err := strings.clone_to_cstring(candidate)
+		if alloc_err != nil {
+			continue
+		}
+
+		loaded := imgui.font_atlas_add_font_from_file_ttf(io.fonts, path_c, size_pixels, nil, nil) != nil
+		delete(path_c)
+		if loaded {
+			return true
+		}
+	}
+
+	return false
+}
+
+@(private) apply_theme_font_preset :: proc(theme: Ui_Theme, io: ^imgui.IO, rebuild_font_texture: bool) {
+	if io == nil || io.fonts == nil {
+		return
+	}
+
+	imgui.font_atlas_clear(io.fonts)
+
+	loaded_custom := false
+	font_choice := resolve_theme_font(theme)
+
+	switch font_choice {
+	case .Manrope:
+		manrope_candidates := [4]string{
+			"Editor/Fonts/Manrope-Regular.ttf",
+			"Fonts/Manrope-Regular.ttf",
+			"C:/Windows/Fonts/Manrope-Regular.ttf",
+			"C:/Windows/Fonts/Manrope.ttf",
+		}
+		loaded_custom = add_font_from_candidates(io, 17, manrope_candidates[:])
+	case .Inter:
+		inter_candidates := [4]string{
+			"Editor/Fonts/Inter-Regular.ttf",
+			"Fonts/Inter-Regular.ttf",
+			"C:/Windows/Fonts/Inter-Regular.ttf",
+			"C:/Windows/Fonts/Inter.ttf",
+		}
+		loaded_custom = add_font_from_candidates(io, 17, inter_candidates[:])
+	case .Default:
+		loaded_custom = false
+	}
+
+	if !loaded_custom {
+		_ = imgui.font_atlas_add_font_default(io.fonts, nil)
+	}
+
+	if rebuild_font_texture && active_ui_backend == .OpenGL {
+		imgui_gl3.destroy_fonts_texture()
+		_ = imgui_gl3.create_fonts_texture()
+	}
 }
 
 @(private) resolve_game_config_path :: proc(app_config_directory_path: string) -> string {
@@ -185,7 +523,7 @@ force_default_layout_next_frame: bool
 
 	io := imgui.get_io()
 	io.config_flags += {.Docking_Enable}
-	imgui.style_colors_dark(nil)
+	apply_ui_theme(editor_runtime.theme.active_theme, io, false)
 
 	if imgui_layout_path != "" && os.exists(imgui_layout_path) {
 		layout_path_c, alloc_err := strings.clone_to_cstring(imgui_layout_path)
@@ -226,6 +564,272 @@ force_default_layout_next_frame: bool
 	}
 
 	return true
+}
+
+@(private) apply_terracotta_theme :: proc(io: ^imgui.IO) {
+	imgui.style_colors_light(nil)
+
+	style := imgui.get_style()
+	style.window_rounding = 7
+	style.child_rounding = 6
+	style.popup_rounding = 6
+	style.frame_rounding = 6
+	style.grab_rounding = 6
+	style.tab_rounding = 6
+	style.scrollbar_rounding = 8
+	style.window_border_size = 1
+	style.frame_border_size = 1
+	style.popup_border_size = 1
+	style.item_spacing = {8, 7}
+	style.frame_padding = {10, 6}
+	style.window_padding = {10, 10}
+
+	style.colors[imgui.Col.Text] = {0.21, 0.13, 0.10, 1.00}
+	style.colors[imgui.Col.Text_Disabled] = {0.47, 0.35, 0.30, 1.00}
+	style.colors[imgui.Col.Window_Bg] = {0.99, 0.95, 0.90, 1.00}
+	style.colors[imgui.Col.Child_Bg] = {0.98, 0.92, 0.86, 1.00}
+	style.colors[imgui.Col.Popup_Bg] = {0.99, 0.93, 0.87, 1.00}
+	style.colors[imgui.Col.Border] = {0.76, 0.50, 0.39, 0.90}
+	style.colors[imgui.Col.Border_Shadow] = {0.00, 0.00, 0.00, 0.00}
+	style.colors[imgui.Col.Frame_Bg] = {0.95, 0.79, 0.68, 0.85}
+	style.colors[imgui.Col.Frame_Bg_Hovered] = {0.92, 0.67, 0.53, 0.95}
+	style.colors[imgui.Col.Frame_Bg_Active] = {0.84, 0.48, 0.34, 1.00}
+	style.colors[imgui.Col.Title_Bg] = {0.85, 0.51, 0.36, 0.90}
+	style.colors[imgui.Col.Title_Bg_Active] = {0.74, 0.37, 0.27, 1.00}
+	style.colors[imgui.Col.Title_Bg_Collapsed] = {0.84, 0.54, 0.39, 0.70}
+	style.colors[imgui.Col.Menu_Bar_Bg] = {0.96, 0.84, 0.73, 1.00}
+	style.colors[imgui.Col.Scrollbar_Bg] = {0.95, 0.84, 0.74, 0.65}
+	style.colors[imgui.Col.Scrollbar_Grab] = {0.83, 0.53, 0.39, 0.75}
+	style.colors[imgui.Col.Scrollbar_Grab_Hovered] = {0.79, 0.44, 0.31, 0.90}
+	style.colors[imgui.Col.Scrollbar_Grab_Active] = {0.69, 0.34, 0.24, 1.00}
+	style.colors[imgui.Col.Check_Mark] = {0.67, 0.26, 0.16, 1.00}
+	style.colors[imgui.Col.Slider_Grab] = {0.77, 0.40, 0.27, 0.90}
+	style.colors[imgui.Col.Slider_Grab_Active] = {0.66, 0.25, 0.16, 1.00}
+	style.colors[imgui.Col.Button] = {0.86, 0.56, 0.43, 0.90}
+	style.colors[imgui.Col.Button_Hovered] = {0.80, 0.45, 0.33, 1.00}
+	style.colors[imgui.Col.Button_Active] = {0.68, 0.32, 0.23, 1.00}
+	style.colors[imgui.Col.Header] = {0.92, 0.71, 0.59, 0.80}
+	style.colors[imgui.Col.Header_Hovered] = {0.86, 0.56, 0.43, 0.95}
+	style.colors[imgui.Col.Header_Active] = {0.75, 0.40, 0.29, 1.00}
+	style.colors[imgui.Col.Separator] = {0.75, 0.51, 0.40, 0.80}
+	style.colors[imgui.Col.Separator_Hovered] = {0.74, 0.43, 0.32, 0.95}
+	style.colors[imgui.Col.Separator_Active] = {0.66, 0.34, 0.25, 1.00}
+	style.colors[imgui.Col.Resize_Grip] = {0.73, 0.41, 0.30, 0.55}
+	style.colors[imgui.Col.Resize_Grip_Hovered] = {0.70, 0.34, 0.25, 0.85}
+	style.colors[imgui.Col.Resize_Grip_Active] = {0.61, 0.28, 0.20, 1.00}
+	style.colors[imgui.Col.Tab] = {0.90, 0.70, 0.59, 0.80}
+	style.colors[imgui.Col.Tab_Hovered] = {0.84, 0.52, 0.39, 0.95}
+	style.colors[imgui.Col.Tab_Selected] = {0.75, 0.39, 0.28, 0.95}
+	style.colors[imgui.Col.Tab_Dimmed] = {0.93, 0.78, 0.69, 0.75}
+	style.colors[imgui.Col.Tab_Dimmed_Selected] = {0.83, 0.58, 0.46, 0.85}
+	style.colors[imgui.Col.Docking_Preview] = {0.72, 0.36, 0.25, 0.60}
+	style.colors[imgui.Col.Docking_Empty_Bg] = {0.99, 0.94, 0.88, 1.00}
+	style.colors[imgui.Col.Table_Header_Bg] = {0.92, 0.73, 0.62, 0.85}
+	style.colors[imgui.Col.Table_Border_Strong] = {0.78, 0.53, 0.42, 0.95}
+	style.colors[imgui.Col.Table_Border_Light] = {0.82, 0.66, 0.56, 0.70}
+	style.colors[imgui.Col.Table_Row_Bg] = {1.00, 0.97, 0.94, 0.55}
+	style.colors[imgui.Col.Table_Row_Bg_Alt] = {0.98, 0.91, 0.85, 0.55}
+	style.colors[imgui.Col.Text_Selected_Bg] = {0.80, 0.46, 0.33, 0.45}
+	style.colors[imgui.Col.Drag_Drop_Target] = {0.70, 0.26, 0.16, 0.95}
+	style.colors[imgui.Col.Nav_Cursor] = {0.69, 0.27, 0.17, 0.90}
+	style.colors[imgui.Col.Modal_Window_Dim_Bg] = {0.36, 0.20, 0.14, 0.24}
+
+	io.font_global_scale = 1.04
+	set_ui_clear_color(0.99, 0.94, 0.88, 1.00)
+}
+
+@(private) apply_light_orange_theme :: proc(io: ^imgui.IO) {
+	imgui.style_colors_light(nil)
+
+	style := imgui.get_style()
+	style.window_rounding = 7
+	style.child_rounding = 6
+	style.popup_rounding = 6
+	style.frame_rounding = 6
+	style.grab_rounding = 6
+	style.tab_rounding = 6
+	style.scrollbar_rounding = 8
+	style.window_border_size = 1
+	style.frame_border_size = 1
+	style.popup_border_size = 1
+	style.item_spacing = {8, 7}
+	style.frame_padding = {10, 6}
+	style.window_padding = {10, 10}
+
+	style.colors[imgui.Col.Text] = {0.23, 0.16, 0.09, 1.00}
+	style.colors[imgui.Col.Text_Disabled] = {0.55, 0.44, 0.33, 1.00}
+	style.colors[imgui.Col.Window_Bg] = {1.00, 0.96, 0.84, 1.00}
+	style.colors[imgui.Col.Child_Bg] = {1.00, 0.97, 0.88, 1.00}
+	style.colors[imgui.Col.Popup_Bg] = {1.00, 0.96, 0.86, 1.00}
+	style.colors[imgui.Col.Border] = {0.90, 0.73, 0.54, 0.85}
+	style.colors[imgui.Col.Border_Shadow] = {0.00, 0.00, 0.00, 0.00}
+	style.colors[imgui.Col.Frame_Bg] = {1.00, 0.91, 0.78, 0.75}
+	style.colors[imgui.Col.Frame_Bg_Hovered] = {1.00, 0.84, 0.63, 0.85}
+	style.colors[imgui.Col.Frame_Bg_Active] = {0.98, 0.76, 0.49, 0.90}
+	style.colors[imgui.Col.Title_Bg] = {0.95, 0.73, 0.47, 0.88}
+	style.colors[imgui.Col.Title_Bg_Active] = {0.95, 0.64, 0.33, 0.95}
+	style.colors[imgui.Col.Title_Bg_Collapsed] = {0.94, 0.72, 0.49, 0.70}
+	style.colors[imgui.Col.Menu_Bar_Bg] = {0.99, 0.92, 0.82, 1.00}
+	style.colors[imgui.Col.Scrollbar_Bg] = {0.98, 0.91, 0.80, 0.65}
+	style.colors[imgui.Col.Scrollbar_Grab] = {0.94, 0.70, 0.41, 0.75}
+	style.colors[imgui.Col.Scrollbar_Grab_Hovered] = {0.95, 0.60, 0.28, 0.88}
+	style.colors[imgui.Col.Scrollbar_Grab_Active] = {0.93, 0.53, 0.22, 0.95}
+	style.colors[imgui.Col.Check_Mark] = {0.86, 0.42, 0.10, 1.00}
+	style.colors[imgui.Col.Slider_Grab] = {0.92, 0.53, 0.19, 0.85}
+	style.colors[imgui.Col.Slider_Grab_Active] = {0.86, 0.42, 0.10, 1.00}
+	style.colors[imgui.Col.Button] = {0.95, 0.72, 0.45, 0.85}
+	style.colors[imgui.Col.Button_Hovered] = {0.95, 0.62, 0.30, 0.95}
+	style.colors[imgui.Col.Button_Active] = {0.88, 0.49, 0.17, 1.00}
+	style.colors[imgui.Col.Header] = {0.98, 0.82, 0.60, 0.80}
+	style.colors[imgui.Col.Header_Hovered] = {0.98, 0.73, 0.45, 0.95}
+	style.colors[imgui.Col.Header_Active] = {0.91, 0.56, 0.24, 1.00}
+	style.colors[imgui.Col.Separator] = {0.88, 0.66, 0.44, 0.70}
+	style.colors[imgui.Col.Separator_Hovered] = {0.90, 0.57, 0.28, 0.90}
+	style.colors[imgui.Col.Separator_Active] = {0.85, 0.50, 0.23, 1.00}
+	style.colors[imgui.Col.Resize_Grip] = {0.90, 0.56, 0.25, 0.45}
+	style.colors[imgui.Col.Resize_Grip_Hovered] = {0.90, 0.52, 0.20, 0.80}
+	style.colors[imgui.Col.Resize_Grip_Active] = {0.85, 0.45, 0.16, 1.00}
+	style.colors[imgui.Col.Tab] = {0.97, 0.83, 0.65, 0.75}
+	style.colors[imgui.Col.Tab_Hovered] = {0.96, 0.69, 0.40, 0.90}
+	style.colors[imgui.Col.Tab_Selected] = {0.95, 0.62, 0.30, 0.95}
+	style.colors[imgui.Col.Tab_Dimmed] = {0.97, 0.87, 0.74, 0.75}
+	style.colors[imgui.Col.Tab_Dimmed_Selected] = {0.95, 0.73, 0.49, 0.85}
+	style.colors[imgui.Col.Docking_Preview] = {0.95, 0.57, 0.22, 0.60}
+	style.colors[imgui.Col.Docking_Empty_Bg] = {1.00, 0.95, 0.82, 1.00}
+	style.colors[imgui.Col.Table_Header_Bg] = {0.97, 0.84, 0.65, 0.85}
+	style.colors[imgui.Col.Table_Border_Strong] = {0.89, 0.69, 0.48, 0.95}
+	style.colors[imgui.Col.Table_Border_Light] = {0.91, 0.78, 0.64, 0.70}
+	style.colors[imgui.Col.Table_Row_Bg] = {1.00, 0.98, 0.95, 0.55}
+	style.colors[imgui.Col.Table_Row_Bg_Alt] = {1.00, 0.95, 0.87, 0.55}
+	style.colors[imgui.Col.Text_Selected_Bg] = {0.99, 0.76, 0.42, 0.55}
+	style.colors[imgui.Col.Drag_Drop_Target] = {0.97, 0.50, 0.10, 0.95}
+	style.colors[imgui.Col.Nav_Cursor] = {0.90, 0.50, 0.13, 0.80}
+	style.colors[imgui.Col.Modal_Window_Dim_Bg] = {0.45, 0.30, 0.17, 0.20}
+
+	io.font_global_scale = 1.04
+	set_ui_clear_color(1.00, 0.95, 0.82, 1.00)
+}
+
+@(private) apply_citrus_sand_theme :: proc(io: ^imgui.IO) {
+	imgui.style_colors_light(nil)
+
+	style := imgui.get_style()
+	style.window_rounding = 7
+	style.child_rounding = 6
+	style.popup_rounding = 6
+	style.frame_rounding = 6
+	style.tab_rounding = 6
+	style.frame_padding = {10, 6}
+	style.window_padding = {10, 10}
+
+	style.colors[imgui.Col.Text] = {0.23, 0.15, 0.09, 1.00}
+	style.colors[imgui.Col.Text_Disabled] = {0.48, 0.38, 0.29, 1.00}
+	style.colors[imgui.Col.Window_Bg] = {1.00, 0.95, 0.84, 1.00}
+	style.colors[imgui.Col.Child_Bg] = {1.00, 0.91, 0.75, 1.00}
+	style.colors[imgui.Col.Popup_Bg] = {1.00, 0.93, 0.79, 1.00}
+	style.colors[imgui.Col.Border] = {0.85, 0.71, 0.53, 0.90}
+	style.colors[imgui.Col.Frame_Bg] = {1.00, 0.86, 0.64, 0.80}
+	style.colors[imgui.Col.Frame_Bg_Hovered] = {0.97, 0.74, 0.44, 0.90}
+	style.colors[imgui.Col.Frame_Bg_Active] = {0.89, 0.48, 0.18, 0.95}
+	style.colors[imgui.Col.Button] = {0.89, 0.48, 0.18, 0.84}
+	style.colors[imgui.Col.Button_Hovered] = {0.79, 0.38, 0.12, 0.95}
+	style.colors[imgui.Col.Button_Active] = {0.72, 0.31, 0.10, 1.00}
+	style.colors[imgui.Col.Header] = {0.94, 0.70, 0.42, 0.82}
+	style.colors[imgui.Col.Header_Hovered] = {0.89, 0.53, 0.23, 0.95}
+	style.colors[imgui.Col.Header_Active] = {0.82, 0.40, 0.16, 1.00}
+	style.colors[imgui.Col.Tab] = {0.96, 0.80, 0.56, 0.80}
+	style.colors[imgui.Col.Tab_Hovered] = {0.92, 0.60, 0.30, 0.95}
+	style.colors[imgui.Col.Tab_Selected] = {0.89, 0.48, 0.18, 0.92}
+
+	io.font_global_scale = 1.00
+	set_ui_clear_color(1.00, 0.95, 0.84, 1.00)
+}
+
+@(private) apply_apricot_paper_theme :: proc(io: ^imgui.IO) {
+	imgui.style_colors_light(nil)
+
+	style := imgui.get_style()
+	style.window_rounding = 7
+	style.child_rounding = 6
+	style.popup_rounding = 6
+	style.frame_rounding = 6
+	style.tab_rounding = 6
+	style.frame_padding = {10, 6}
+	style.window_padding = {10, 10}
+
+	style.colors[imgui.Col.Text] = {0.20, 0.14, 0.10, 1.00}
+	style.colors[imgui.Col.Text_Disabled] = {0.46, 0.37, 0.30, 1.00}
+	style.colors[imgui.Col.Window_Bg] = {1.00, 0.96, 0.91, 1.00}
+	style.colors[imgui.Col.Child_Bg] = {1.00, 0.93, 0.85, 1.00}
+	style.colors[imgui.Col.Popup_Bg] = {1.00, 0.94, 0.88, 1.00}
+	style.colors[imgui.Col.Border] = {0.84, 0.66, 0.50, 0.85}
+	style.colors[imgui.Col.Frame_Bg] = {0.99, 0.86, 0.73, 0.78}
+	style.colors[imgui.Col.Frame_Bg_Hovered] = {0.93, 0.73, 0.54, 0.90}
+	style.colors[imgui.Col.Frame_Bg_Active] = {0.85, 0.54, 0.32, 0.95}
+	style.colors[imgui.Col.Button] = {0.85, 0.54, 0.32, 0.82}
+	style.colors[imgui.Col.Button_Hovered] = {0.78, 0.45, 0.26, 0.95}
+	style.colors[imgui.Col.Button_Active] = {0.68, 0.36, 0.20, 1.00}
+	style.colors[imgui.Col.Header] = {0.92, 0.74, 0.56, 0.82}
+	style.colors[imgui.Col.Header_Hovered] = {0.86, 0.58, 0.38, 0.95}
+	style.colors[imgui.Col.Header_Active] = {0.76, 0.44, 0.24, 1.00}
+	style.colors[imgui.Col.Tab] = {0.95, 0.82, 0.66, 0.78}
+	style.colors[imgui.Col.Tab_Hovered] = {0.90, 0.64, 0.43, 0.94}
+	style.colors[imgui.Col.Tab_Selected] = {0.82, 0.50, 0.30, 0.92}
+
+	io.font_global_scale = 1.00
+	set_ui_clear_color(1.00, 0.96, 0.91, 1.00)
+}
+
+@(private) apply_ocean_mist_theme :: proc(io: ^imgui.IO) {
+	imgui.style_colors_light(nil)
+
+	style := imgui.get_style()
+	style.window_rounding = 7
+	style.child_rounding = 6
+	style.popup_rounding = 6
+	style.frame_rounding = 6
+	style.tab_rounding = 6
+	style.frame_padding = {10, 6}
+	style.window_padding = {10, 10}
+
+	style.colors[imgui.Col.Text] = {0.11, 0.20, 0.24, 1.00}
+	style.colors[imgui.Col.Window_Bg] = {0.93, 0.97, 0.97, 1.00}
+	style.colors[imgui.Col.Child_Bg] = {0.89, 0.95, 0.95, 1.00}
+	style.colors[imgui.Col.Popup_Bg] = {0.92, 0.96, 0.96, 1.00}
+	style.colors[imgui.Col.Button] = {0.28, 0.62, 0.66, 0.80}
+	style.colors[imgui.Col.Button_Hovered] = {0.21, 0.54, 0.58, 0.92}
+	style.colors[imgui.Col.Button_Active] = {0.15, 0.43, 0.47, 1.00}
+	style.colors[imgui.Col.Header] = {0.45, 0.73, 0.75, 0.75}
+	style.colors[imgui.Col.Tab_Selected] = {0.20, 0.54, 0.58, 0.90}
+
+	io.font_global_scale = 1.04
+	set_ui_clear_color(0.93, 0.97, 0.97, 1.00)
+}
+
+@(private) apply_olive_studio_theme :: proc(io: ^imgui.IO) {
+	imgui.style_colors_light(nil)
+
+	style := imgui.get_style()
+	style.window_rounding = 7
+	style.child_rounding = 6
+	style.popup_rounding = 6
+	style.frame_rounding = 6
+	style.tab_rounding = 6
+	style.frame_padding = {10, 6}
+	style.window_padding = {10, 10}
+
+	style.colors[imgui.Col.Text] = {0.19, 0.22, 0.14, 1.00}
+	style.colors[imgui.Col.Window_Bg] = {0.95, 0.95, 0.86, 1.00}
+	style.colors[imgui.Col.Child_Bg] = {0.90, 0.91, 0.78, 1.00}
+	style.colors[imgui.Col.Popup_Bg] = {0.93, 0.94, 0.82, 1.00}
+	style.colors[imgui.Col.Button] = {0.46, 0.57, 0.33, 0.82}
+	style.colors[imgui.Col.Button_Hovered] = {0.37, 0.48, 0.26, 0.95}
+	style.colors[imgui.Col.Button_Active] = {0.29, 0.39, 0.20, 1.00}
+	style.colors[imgui.Col.Header] = {0.62, 0.70, 0.46, 0.80}
+	style.colors[imgui.Col.Tab_Selected] = {0.36, 0.46, 0.24, 0.90}
+
+	io.font_global_scale = 1.04
+	set_ui_clear_color(0.95, 0.95, 0.86, 1.00)
 }
 
 @(private) shutdown_imgui :: proc(backend: Ui_Render_Backend) {
@@ -272,7 +876,7 @@ force_default_layout_next_frame: bool
 	switch backend {
 	case .OpenGL:
 		gl.Viewport(0, 0, fb_width, fb_height)
-		gl.ClearColor(0.09, 0.1, 0.12, 1.0)
+		gl.ClearColor(editor_runtime.theme.clear_color[0], editor_runtime.theme.clear_color[1], editor_runtime.theme.clear_color[2], editor_runtime.theme.clear_color[3])
 		gl.Clear(gl.COLOR_BUFFER_BIT)
 		imgui_gl3.render_draw_data(imgui.get_draw_data())
 		glfw.SwapBuffers(window)
@@ -284,10 +888,10 @@ force_default_layout_next_frame: bool
 @(private) draw_directory_tree :: proc() {
 	if imgui.begin("Directory Tree") {
 		if imgui.begin_combo("File-visibility", "Select file types") {
-			_ = imgui.checkbox("show .png", &directory_tree_show_png)
-			_ = imgui.checkbox("show .skm", &directory_tree_show_skm)
-			_ = imgui.checkbox("show .sm", &directory_tree_show_sm)
-			_ = imgui.checkbox("show .mtl", &directory_tree_show_mtl)
+			_ = imgui.checkbox("show .png", &editor_runtime.directory_tree.show_png)
+			_ = imgui.checkbox("show .skm", &editor_runtime.directory_tree.show_skm)
+			_ = imgui.checkbox("show .sm", &editor_runtime.directory_tree.show_sm)
+			_ = imgui.checkbox("show .mtl", &editor_runtime.directory_tree.show_mtl)
 			imgui.end_combo()
 		}
 
@@ -311,15 +915,16 @@ force_default_layout_next_frame: bool
 
 		imgui.separator()
 		imgui.text("Selected:")
-		if directory_tree_selected_path != "" {
+		if editor_runtime.directory_tree.selected_path != "" {
 			imgui.same_line()
-			selected_path_c, alloc_err := strings.clone_to_cstring(directory_tree_selected_path)
+			selected_path_c, alloc_err := strings.clone_to_cstring(editor_runtime.directory_tree.selected_path)
 			if alloc_err == nil {
 				imgui.text("%s", selected_path_c)
 				delete(selected_path_c)
 			}
 		}
 		draw_create_folder_modal()
+		draw_delete_folder_modal()
 	}
 	imgui.end()
 }
@@ -337,28 +942,68 @@ force_default_layout_next_frame: bool
 	return "."
 }
 
-@(private) draw_directory_entries :: proc(path: string, root_path: string) {
-	entries, err := os.read_all_directory_by_path(path, context.allocator)
+@(private) clear_directory_cache :: proc() {
+	for i in 0 ..< len(editor_runtime.directory_cache.paths) {
+		if editor_runtime.directory_cache.paths[i] != "" {
+			delete(editor_runtime.directory_cache.paths[i])
+		}
+		os.file_info_slice_delete(editor_runtime.directory_cache.entries[i], context.allocator)
+	}
+
+	delete(editor_runtime.directory_cache.paths)
+	delete(editor_runtime.directory_cache.entries)
+	editor_runtime.directory_cache.paths = nil
+	editor_runtime.directory_cache.entries = nil
+}
+
+@(private) invalidate_directory_cache :: proc() {
+	clear_directory_cache()
+}
+
+@(private) get_cached_directory_entries :: proc(path: string) -> (entries: []os.File_Info, ok: bool) {
+	for i in 0 ..< len(editor_runtime.directory_cache.paths) {
+		if editor_runtime.directory_cache.paths[i] == path {
+			return editor_runtime.directory_cache.entries[i], true
+		}
+	}
+
+	fresh_entries, err := os.read_all_directory_by_path(path, context.allocator)
 	if err != nil {
+		return nil, false
+	}
+	sort_directory_entries(fresh_entries)
+
+	cloned_path, clone_err := strings.clone(path, context.allocator)
+	if clone_err != nil {
+		os.file_info_slice_delete(fresh_entries, context.allocator)
+		return nil, false
+	}
+
+	append(&editor_runtime.directory_cache.paths, cloned_path)
+	append(&editor_runtime.directory_cache.entries, fresh_entries)
+	return fresh_entries, true
+}
+
+@(private) draw_directory_entries :: proc(path: string, root_path: string) {
+	entries, ok := get_cached_directory_entries(path)
+	if !ok {
 		imgui.text("Failed to read directory")
 		return
 	}
-	defer os.file_info_slice_delete(entries, context.allocator)
-	sort_directory_entries(entries)
 
 	for entry in entries {
 		if entry.type == .Directory {
 			if entry.name == ".git" {
 				continue
 			}
-			if directory_tree_hide_non_primary_root_dirs && path == root_path {
+			if editor_runtime.directory_tree.hide_non_primary_root_dirs && path == root_path {
 				if entry.name != "App" && entry.name != "Editor" {
 					continue
 				}
 			}
 
 			flags: imgui.Tree_Node_Flags = {.Span_Avail_Width}
-			if directory_tree_selected_is_dir && directory_tree_selected_path == entry.fullpath {
+			if editor_runtime.directory_tree.selected_is_dir && editor_runtime.directory_tree.selected_path == entry.fullpath {
 				flags += {.Selected}
 			}
 
@@ -370,6 +1015,7 @@ force_default_layout_next_frame: bool
 			if imgui.tree_node_ex(entry_name_c, flags) {
 			context_menu_id := strings.concatenate({"dir_ctx::", entry.fullpath}, context.temp_allocator)
 			context_menu_id_c, ctx_alloc_err := strings.clone_to_cstring(context_menu_id)
+				delete_allowed := !is_folder_protected_from_deletion(entry.fullpath)
 				delete(entry_name_c)
 				if ctx_alloc_err == nil {
 					if imgui.is_item_clicked(.Right) {
@@ -381,10 +1027,12 @@ force_default_layout_next_frame: bool
 							queue_create_folder_popup(entry.fullpath)
 							imgui.close_current_popup()
 						}
-						if imgui.menu_item("delete-folder") {
-							delete_folder_recursive(entry.fullpath)
+						imgui.begin_disabled(!delete_allowed)
+						if imgui.menu_item("delete-folder") && delete_allowed {
+							queue_delete_folder_modal(entry.fullpath)
 							imgui.close_current_popup()
 						}
+						imgui.end_disabled()
 						imgui.end_popup()
 					}
 					delete(context_menu_id_c)
@@ -397,6 +1045,7 @@ force_default_layout_next_frame: bool
 			} else {
 				context_menu_id := strings.concatenate({"dir_ctx::", entry.fullpath}, context.temp_allocator)
 				context_menu_id_c, ctx_alloc_err := strings.clone_to_cstring(context_menu_id)
+				delete_allowed := !is_folder_protected_from_deletion(entry.fullpath)
 				delete(entry_name_c)
 				if ctx_alloc_err == nil {
 					if imgui.is_item_clicked(.Right) {
@@ -408,10 +1057,12 @@ force_default_layout_next_frame: bool
 							queue_create_folder_popup(entry.fullpath)
 							imgui.close_current_popup()
 						}
-						if imgui.menu_item("delete-folder") {
-							delete_folder_recursive(entry.fullpath)
+						imgui.begin_disabled(!delete_allowed)
+						if imgui.menu_item("delete-folder") && delete_allowed {
+							queue_delete_folder_modal(entry.fullpath)
 							imgui.close_current_popup()
 						}
+						imgui.end_disabled()
 						imgui.end_popup()
 					}
 					delete(context_menu_id_c)
@@ -430,7 +1081,7 @@ force_default_layout_next_frame: bool
 			}
 
 			flags: imgui.Tree_Node_Flags = {.Leaf, .No_Tree_Push_On_Open, .Span_Avail_Width}
-			if !directory_tree_selected_is_dir && directory_tree_selected_path == entry.fullpath {
+			if !editor_runtime.directory_tree.selected_is_dir && editor_runtime.directory_tree.selected_path == entry.fullpath {
 				flags += {.Selected}
 			}
 
@@ -449,19 +1100,118 @@ force_default_layout_next_frame: bool
 }
 
 @(private) delete_folder_recursive :: proc(path: string) {
+	if is_folder_protected_from_deletion(path) {
+		return
+	}
+
 	err := os.remove_all(path)
 	if err != nil {
 		fmt.eprintln("Failed to delete folder:", path, "-", err)
 		return
 	}
 
-	if directory_tree_selected_path != "" && directory_tree_selected_path == path {
+	if editor_runtime.directory_tree.selected_path != "" && editor_runtime.directory_tree.selected_path == path {
 		parent, _ := os.split_path(path)
 		if parent == "" {
 			parent = resolve_project_root_path()
 		}
 		set_directory_tree_selection(parent, true)
 	}
+
+	invalidate_directory_cache()
+}
+
+@(private) queue_delete_folder_modal :: proc(path: string) {
+	if is_folder_protected_from_deletion(path) {
+		return
+	}
+
+	if editor_runtime.directory_tree.delete_folder_target_path != "" {
+		delete(editor_runtime.directory_tree.delete_folder_target_path)
+		editor_runtime.directory_tree.delete_folder_target_path = ""
+	}
+
+	cloned, err := strings.clone(path, context.allocator)
+	if err != nil {
+		return
+	}
+
+	editor_runtime.directory_tree.delete_folder_target_path = cloned
+	editor_runtime.directory_tree.delete_folder_open_modal = true
+}
+
+@(private) is_folder_protected_from_deletion :: proc(folder: string) -> bool {
+	root_path := resolve_project_root_path()
+	root_abs, root_err := os.get_absolute_path(root_path, context.temp_allocator)
+	folder_abs, folder_err := os.get_absolute_path(folder, context.temp_allocator)
+	if root_err != nil || folder_err != nil {
+		return true
+	}
+
+	root_norm := normalize_import_gate_path(root_abs)
+	folder_norm := normalize_import_gate_path(folder_abs)
+	app_root := strings.concatenate({root_norm, "/app"}, context.temp_allocator)
+	editor_root := strings.concatenate({root_norm, "/editor"}, context.temp_allocator)
+	engine_root := strings.concatenate({root_norm, "/engine"}, context.temp_allocator)
+	config_root := strings.concatenate({app_root, "/config"}, context.temp_allocator)
+	levels_root := strings.concatenate({app_root, "/levels"}, context.temp_allocator)
+
+	if folder_norm == app_root || folder_norm == editor_root {
+		return true
+	}
+
+	if folder_norm == config_root || folder_norm == levels_root {
+		return true
+	}
+
+	if folder_norm == engine_root || strings.has_prefix(folder_norm, strings.concatenate({engine_root, "/"}, context.temp_allocator)) {
+		return true
+	}
+
+	return false
+}
+
+@(private) draw_delete_folder_modal :: proc() {
+	if editor_runtime.directory_tree.delete_folder_open_modal {
+		imgui.open_popup("Delete Folder")
+		editor_runtime.directory_tree.delete_folder_open_modal = false
+	}
+
+	if !imgui.begin_popup_modal("Delete Folder") {
+		return
+	}
+
+	imgui.text("This will delete the folder and all of it's contents. Are you sure?")
+	if editor_runtime.directory_tree.delete_folder_target_path != "" {
+		path_c, path_err := strings.clone_to_cstring(editor_runtime.directory_tree.delete_folder_target_path)
+		if path_err == nil {
+			imgui.text("%s", path_c)
+			delete(path_c)
+		}
+	}
+
+	ok := imgui.button("OK")
+	imgui.same_line()
+	cancel := imgui.button("Cancel")
+
+	if ok {
+		if editor_runtime.directory_tree.delete_folder_target_path != "" {
+			delete_folder_recursive(editor_runtime.directory_tree.delete_folder_target_path)
+			delete(editor_runtime.directory_tree.delete_folder_target_path)
+			editor_runtime.directory_tree.delete_folder_target_path = ""
+		}
+		imgui.close_current_popup()
+	}
+
+	if cancel {
+		if editor_runtime.directory_tree.delete_folder_target_path != "" {
+			delete(editor_runtime.directory_tree.delete_folder_target_path)
+			editor_runtime.directory_tree.delete_folder_target_path = ""
+		}
+		imgui.close_current_popup()
+	}
+
+	imgui.end_popup()
 }
 
 @(private) queue_create_folder_popup :: proc(parent_path: string) {
@@ -471,21 +1221,21 @@ force_default_layout_next_frame: bool
 	if err != nil {
 		return
 	}
-	directory_tree_create_folder_parent_path = cloned_parent
+	editor_runtime.directory_tree.create_folder_parent_path = cloned_parent
 
-	for i in 0 ..< len(directory_tree_new_folder_name) {
-		directory_tree_new_folder_name[i] = 0
+	for i in 0 ..< len(editor_runtime.directory_tree.new_folder_name) {
+		editor_runtime.directory_tree.new_folder_name[i] = 0
 	}
 	default_name := "New Folder"
-	copy(directory_tree_new_folder_name[:], default_name)
+	copy(editor_runtime.directory_tree.new_folder_name[:], default_name)
 
-	directory_tree_open_create_folder_popup = true
+	editor_runtime.directory_tree.open_create_folder_popup = true
 }
 
 @(private) draw_create_folder_modal :: proc() {
-	if directory_tree_open_create_folder_popup {
+	if editor_runtime.directory_tree.open_create_folder_popup {
 		imgui.open_popup("Create Folder")
-		directory_tree_open_create_folder_popup = false
+		editor_runtime.directory_tree.open_create_folder_popup = false
 	}
 
 	if imgui.begin_popup_modal("Create Folder") {
@@ -495,18 +1245,18 @@ force_default_layout_next_frame: bool
 
 		imgui.text("Parent:")
 		imgui.same_line()
-		if directory_tree_create_folder_parent_path != "" {
-			parent_c, alloc_err := strings.clone_to_cstring(directory_tree_create_folder_parent_path)
+		if editor_runtime.directory_tree.create_folder_parent_path != "" {
+			parent_c, alloc_err := strings.clone_to_cstring(editor_runtime.directory_tree.create_folder_parent_path)
 			if alloc_err == nil {
 				imgui.text("%s", parent_c)
 				delete(parent_c)
 			}
 		}
 
-		_ = imgui.input_text("Folder Name", cstring(&directory_tree_new_folder_name[0]), uint(len(directory_tree_new_folder_name)))
+		_ = imgui.input_text("Folder Name", cstring(&editor_runtime.directory_tree.new_folder_name[0]), uint(len(editor_runtime.directory_tree.new_folder_name)))
 
-		if directory_tree_create_folder_error != "" {
-			err_c, err_alloc := strings.clone_to_cstring(directory_tree_create_folder_error)
+		if editor_runtime.directory_tree.create_folder_error != "" {
+			err_c, err_alloc := strings.clone_to_cstring(editor_runtime.directory_tree.create_folder_error)
 			if err_alloc == nil {
 				imgui.text("%s", err_c)
 				delete(err_c)
@@ -518,12 +1268,12 @@ force_default_layout_next_frame: bool
 		cancel := imgui.button("Cancel")
 
 		if confirm {
-			folder_name := strings.clone_from_cstring(cstring(&directory_tree_new_folder_name[0]), context.temp_allocator)
+			folder_name := strings.clone_from_cstring(cstring(&editor_runtime.directory_tree.new_folder_name[0]), context.temp_allocator)
 			folder_name = strings.trim_space(folder_name)
 			if folder_name == "" {
 				set_create_folder_error("Folder name cannot be empty")
 			} else {
-				new_folder_path := strings.concatenate({directory_tree_create_folder_parent_path, "/", folder_name}, context.temp_allocator)
+				new_folder_path := strings.concatenate({editor_runtime.directory_tree.create_folder_parent_path, "/", folder_name}, context.temp_allocator)
 				if err := os.make_directory(new_folder_path); err != nil {
 					if err == .Exist {
 						set_create_folder_error("Folder already exists")
@@ -532,6 +1282,7 @@ force_default_layout_next_frame: bool
 					}
 				} else {
 					set_directory_tree_selection(new_folder_path, true)
+					invalidate_directory_cache()
 					clear_create_folder_modal_state()
 					imgui.close_current_popup()
 				}
@@ -548,25 +1299,25 @@ force_default_layout_next_frame: bool
 }
 
 @(private) set_create_folder_error :: proc(message: string) {
-	if directory_tree_create_folder_error != "" {
-		delete(directory_tree_create_folder_error)
-		directory_tree_create_folder_error = ""
+	if editor_runtime.directory_tree.create_folder_error != "" {
+		delete(editor_runtime.directory_tree.create_folder_error)
+		editor_runtime.directory_tree.create_folder_error = ""
 	}
 
 	cloned, err := strings.clone(message, context.allocator)
 	if err == nil {
-		directory_tree_create_folder_error = cloned
+		editor_runtime.directory_tree.create_folder_error = cloned
 	}
 }
 
 @(private) clear_create_folder_modal_state :: proc() {
-	if directory_tree_create_folder_parent_path != "" {
-		delete(directory_tree_create_folder_parent_path)
-		directory_tree_create_folder_parent_path = ""
+	if editor_runtime.directory_tree.create_folder_parent_path != "" {
+		delete(editor_runtime.directory_tree.create_folder_parent_path)
+		editor_runtime.directory_tree.create_folder_parent_path = ""
 	}
-	if directory_tree_create_folder_error != "" {
-		delete(directory_tree_create_folder_error)
-		directory_tree_create_folder_error = ""
+	if editor_runtime.directory_tree.create_folder_error != "" {
+		delete(editor_runtime.directory_tree.create_folder_error)
+		editor_runtime.directory_tree.create_folder_error = ""
 	}
 }
 
@@ -606,40 +1357,234 @@ force_default_layout_next_frame: bool
 	}
 
 	if strings.has_suffix(name_lower, ".png") {
-		return directory_tree_show_png
+		return editor_runtime.directory_tree.show_png
 	}
 	if strings.has_suffix(name_lower, ".skm") {
-		return directory_tree_show_skm
+		return editor_runtime.directory_tree.show_skm
 	}
 	if strings.has_suffix(name_lower, ".sm") {
-		return directory_tree_show_sm
+		return editor_runtime.directory_tree.show_sm
 	}
 	if strings.has_suffix(name_lower, ".mtl") {
-		return directory_tree_show_mtl
+		return editor_runtime.directory_tree.show_mtl
 	}
 
 	return true
 }
 
 @(private) set_directory_tree_selection :: proc(path: string, is_dir: bool) {
-	if directory_tree_selected_path != "" {
-		delete(directory_tree_selected_path)
-		directory_tree_selected_path = ""
+	if editor_runtime.directory_tree.selected_path != "" {
+		delete(editor_runtime.directory_tree.selected_path)
+		editor_runtime.directory_tree.selected_path = ""
 	}
 
 	cloned, err := strings.clone(path, context.allocator)
 	if err != nil {
-		directory_tree_selected_is_dir = is_dir
+		editor_runtime.directory_tree.selected_is_dir = is_dir
 		return
 	}
 
-	directory_tree_selected_path = cloned
-	directory_tree_selected_is_dir = is_dir
+	editor_runtime.directory_tree.selected_path = cloned
+	editor_runtime.directory_tree.selected_is_dir = is_dir
+}
+
+@(private) set_asset_browser_error :: proc(message: string) {
+	if editor_runtime.asset_browser.error != "" {
+		delete(editor_runtime.asset_browser.error)
+		editor_runtime.asset_browser.error = ""
+	}
+
+	if message == "" {
+		return
+	}
+
+	cloned, err := strings.clone(message, context.allocator)
+	if err == nil {
+		editor_runtime.asset_browser.error = cloned
+	}
+}
+
+@(private) set_selected_asset_path :: proc(path: string) {
+	if editor_runtime.asset_browser.selected_asset_path != "" {
+		delete(editor_runtime.asset_browser.selected_asset_path)
+		editor_runtime.asset_browser.selected_asset_path = ""
+	}
+
+	cloned, err := strings.clone(path, context.allocator)
+	if err == nil {
+		editor_runtime.asset_browser.selected_asset_path = cloned
+	}
+}
+
+@(private) clear_asset_import_state :: proc() {
+	if editor_runtime.asset_browser.import_source_path != "" {
+		delete(editor_runtime.asset_browser.import_source_path)
+		editor_runtime.asset_browser.import_source_path = ""
+	}
+	editor_runtime.asset_browser.import_open_modal = false
+}
+
+@(private) queue_asset_delete_modal :: proc(path: string) {
+	if editor_runtime.asset_browser.delete_target_path != "" {
+		delete(editor_runtime.asset_browser.delete_target_path)
+		editor_runtime.asset_browser.delete_target_path = ""
+	}
+
+	cloned, err := strings.clone(path, context.allocator)
+	if err != nil {
+		return
+	}
+
+	editor_runtime.asset_browser.delete_target_path = cloned
+	editor_runtime.asset_browser.delete_open_modal = true
+}
+
+@(private) escape_ps_literal :: proc(value: string) -> string {
+	escaped, _ := strings.replace_all(value, "'", "''", context.temp_allocator)
+	return escaped
+}
+
+@(private) run_powershell_dialog_script :: proc(script_contents: string, result_file_name: string) -> string {
+	root_path := resolve_project_root_path()
+	script_path := strings.concatenate({root_path, "/Editor/.asset_dialog_temp.ps1"}, context.temp_allocator)
+	result_path := strings.concatenate({root_path, "/Editor/", result_file_name}, context.temp_allocator)
+
+	_ = os.remove(result_path)
+
+	write_err := os.write_entire_file(
+		script_path,
+		script_contents,
+		os.Permissions_Read_All + {.Write_User},
+		true,
+	)
+	if write_err != nil {
+		set_asset_browser_error(fmt.tprintf("Failed to write dialog script: %v", write_err))
+		return ""
+	}
+
+	desc := os.Process_Desc{
+		working_dir = root_path,
+		stdin = os.stdin,
+		stdout = os.stdout,
+		stderr = os.stderr,
+		command = {
+			"powershell.exe",
+			"-NoProfile",
+			"-ExecutionPolicy",
+			"Bypass",
+			"-STA",
+			"-File",
+			script_path,
+		},
+	}
+
+	process_handle, start_err := os.process_start(desc)
+	if start_err != nil {
+		set_asset_browser_error(fmt.tprintf("Failed to open file dialog: %v", start_err))
+		_ = os.remove(script_path)
+		return ""
+	}
+
+	_, wait_err := os.process_wait(process_handle)
+	_ = os.remove(script_path)
+	if wait_err != nil {
+		set_asset_browser_error(fmt.tprintf("File dialog process failed: %v", wait_err))
+		return ""
+	}
+
+	raw, read_err := os.read_entire_file(result_path, context.allocator)
+	_ = os.remove(result_path)
+	if read_err != nil {
+		return ""
+	}
+	defer delete(raw)
+
+	path := strings.trim_space(string(raw))
+	if path == "" {
+		return ""
+	}
+
+	cloned, clone_err := strings.clone(path, context.allocator)
+	if clone_err != nil {
+		return ""
+	}
+
+	return cloned
+}
+
+@(private) open_file_dialog_for_import :: proc() -> string {
+	root_path := resolve_project_root_path()
+	result_path := strings.concatenate({root_path, "/Editor/.asset_import_result.txt"}, context.temp_allocator)
+	result_path_ps := escape_ps_literal(result_path)
+
+	script := strings.concatenate({
+		"Add-Type -AssemblyName System.Windows.Forms\n",
+		"$dialog = New-Object System.Windows.Forms.OpenFileDialog\n",
+		"$dialog.Filter = 'All files (*.*)|*.*'\n",
+		"$dialog.Multiselect = $false\n",
+		"if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [System.IO.File]::WriteAllText('",
+		result_path_ps,
+		"', $dialog.FileName) }\n",
+	}, context.temp_allocator)
+
+	return run_powershell_dialog_script(script, ".asset_import_result.txt")
+}
+
+@(private) open_save_dialog_for_export :: proc(default_name: string) -> string {
+	root_path := resolve_project_root_path()
+	result_path := strings.concatenate({root_path, "/Editor/.asset_export_result.txt"}, context.temp_allocator)
+	result_path_ps := escape_ps_literal(result_path)
+	default_name_ps := escape_ps_literal(default_name)
+
+	script := strings.concatenate({
+		"Add-Type -AssemblyName System.Windows.Forms\n",
+		"$dialog = New-Object System.Windows.Forms.SaveFileDialog\n",
+		"$dialog.Filter = 'All files (*.*)|*.*'\n",
+		"$dialog.FileName = '",
+		default_name_ps,
+		"'\n",
+		"if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [System.IO.File]::WriteAllText('",
+		result_path_ps,
+		"', $dialog.FileName) }\n",
+	}, context.temp_allocator)
+
+	return run_powershell_dialog_script(script, ".asset_export_result.txt")
 }
 
 @(private) draw_asset_browser :: proc() {
 	if imgui.begin("Asset Browser") {
 		active_folder := resolve_active_folder_for_asset_browser()
+		import_allowed := is_import_allowed_for_folder(active_folder)
+
+		imgui.begin_disabled(!import_allowed)
+		if imgui.button("Import Asset") {
+			set_asset_browser_error("")
+			source_path := open_file_dialog_for_import()
+			if source_path != "" {
+				clear_asset_import_state()
+				cloned_source, clone_err := strings.clone(source_path, context.allocator)
+				if clone_err == nil {
+					editor_runtime.asset_browser.import_source_path = cloned_source
+					_, source_file_name := os.split_path(source_path)
+					for i in 0 ..< len(editor_runtime.asset_browser.import_target_name) {
+						editor_runtime.asset_browser.import_target_name[i] = 0
+					}
+					copy(editor_runtime.asset_browser.import_target_name[:], source_file_name)
+					editor_runtime.asset_browser.import_open_modal = true
+				}
+				delete(source_path)
+			}
+		}
+		imgui.end_disabled()
+		imgui.same_line()
+		if imgui.button("Refresh") {
+			invalidate_directory_cache()
+			set_asset_browser_error("")
+		}
+		if !import_allowed {
+			imgui.same_line()
+			imgui.text_disabled("Import allowed only under App/ or Editor/")
+		}
 
 		imgui.separator_text("Assets")
 		imgui.text("Folder:")
@@ -650,14 +1595,12 @@ force_default_layout_next_frame: bool
 			delete(folder_c)
 		}
 
-		entries, read_err := os.read_all_directory_by_path(active_folder, context.allocator)
-		if read_err != nil {
+		entries, ok := get_cached_directory_entries(active_folder)
+		if !ok {
 			imgui.text("Failed to read active folder")
 			imgui.end()
 			return
 		}
-		defer os.file_info_slice_delete(entries, context.allocator)
-		sort_directory_entries(entries)
 
 		asset_count := 0
 		for entry in entries {
@@ -673,7 +1616,41 @@ force_default_layout_next_frame: bool
 				continue
 			}
 
-			_ = imgui.selectable(entry_name_c)
+			is_selected := editor_runtime.asset_browser.selected_asset_path == entry.fullpath
+			if imgui.selectable(entry_name_c, is_selected) {
+				set_selected_asset_path(entry.fullpath)
+			}
+
+			menu_id := strings.concatenate({"asset_ctx::", entry.fullpath}, context.temp_allocator)
+			menu_id_c, menu_id_err := strings.clone_to_cstring(menu_id)
+			if menu_id_err == nil {
+				if imgui.is_item_clicked(.Right) {
+					set_selected_asset_path(entry.fullpath)
+					imgui.open_popup(menu_id_c)
+				}
+
+				if is_selected && imgui.begin_popup(menu_id_c) {
+					if imgui.menu_item("export-asset") {
+						set_asset_browser_error("")
+						target_path := open_save_dialog_for_export(entry.name)
+						if target_path != "" {
+							if err := os.copy_file(target_path, entry.fullpath); err != nil {
+								set_asset_browser_error(fmt.tprintf("Asset export failed: %v", err))
+							}
+							delete(target_path)
+						}
+						imgui.close_current_popup()
+					}
+					if imgui.menu_item("delete-asset") {
+						queue_asset_delete_modal(entry.fullpath)
+						imgui.close_current_popup()
+					}
+					imgui.end_popup()
+				}
+
+				delete(menu_id_c)
+			}
+
 			delete(entry_name_c)
 			asset_count += 1
 		}
@@ -681,20 +1658,172 @@ force_default_layout_next_frame: bool
 		if asset_count == 0 {
 			imgui.text("No matching files in active folder")
 		}
+
+		if editor_runtime.asset_browser.error != "" {
+			err_c, err_alloc := strings.clone_to_cstring(editor_runtime.asset_browser.error)
+			if err_alloc == nil {
+				imgui.text("%s", err_c)
+				delete(err_c)
+			}
+		}
+
+		draw_asset_import_modal(active_folder)
+		draw_asset_delete_modal()
 	}
 	imgui.end()
 }
 
+@(private) is_import_allowed_for_folder :: proc(folder: string) -> bool {
+	root_path := resolve_project_root_path()
+	root_abs, root_err := os.get_absolute_path(root_path, context.temp_allocator)
+	folder_abs, folder_err := os.get_absolute_path(folder, context.temp_allocator)
+	if root_err != nil || folder_err != nil {
+		return false
+	}
+
+	root_norm := normalize_import_gate_path(root_abs)
+	folder_norm := normalize_import_gate_path(folder_abs)
+	app_prefix := strings.concatenate({root_norm, "/app"}, context.temp_allocator)
+	editor_prefix := strings.concatenate({root_norm, "/editor"}, context.temp_allocator)
+
+	if folder_norm == app_prefix || strings.has_prefix(folder_norm, strings.concatenate({app_prefix, "/"}, context.temp_allocator)) {
+		return true
+	}
+	if folder_norm == editor_prefix || strings.has_prefix(folder_norm, strings.concatenate({editor_prefix, "/"}, context.temp_allocator)) {
+		return true
+	}
+
+	return false
+}
+
+@(private) normalize_import_gate_path :: proc(path: string) -> string {
+	lower, _ := strings.to_lower(path, context.temp_allocator)
+	normalized, _ := strings.replace_all(lower, "\\", "/", context.temp_allocator)
+	for len(normalized) > 0 && normalized[len(normalized)-1] == '/' {
+		normalized = normalized[:len(normalized)-1]
+	}
+	return normalized
+}
+
+@(private) draw_asset_delete_modal :: proc() {
+	if editor_runtime.asset_browser.delete_open_modal {
+		imgui.open_popup("Delete Asset")
+		editor_runtime.asset_browser.delete_open_modal = false
+	}
+
+	if !imgui.begin_popup_modal("Delete Asset") {
+		return
+	}
+
+	imgui.text("Delete selected asset?")
+	if editor_runtime.asset_browser.delete_target_path != "" {
+		path_c, path_err := strings.clone_to_cstring(editor_runtime.asset_browser.delete_target_path)
+		if path_err == nil {
+			imgui.text("%s", path_c)
+			delete(path_c)
+		}
+	}
+
+	ok := imgui.button("OK")
+	imgui.same_line()
+	cancel := imgui.button("Cancel")
+
+	if ok {
+		if editor_runtime.asset_browser.delete_target_path == "" {
+			set_asset_browser_error("No asset selected for deletion")
+		} else if err := os.remove(editor_runtime.asset_browser.delete_target_path); err != nil {
+			set_asset_browser_error(fmt.tprintf("Asset delete failed: %v", err))
+		} else {
+			if editor_runtime.asset_browser.selected_asset_path == editor_runtime.asset_browser.delete_target_path {
+				set_selected_asset_path("")
+			}
+			if editor_runtime.asset_browser.delete_target_path != "" {
+				delete(editor_runtime.asset_browser.delete_target_path)
+				editor_runtime.asset_browser.delete_target_path = ""
+			}
+			set_asset_browser_error("")
+			invalidate_directory_cache()
+			imgui.close_current_popup()
+		}
+	}
+
+	if cancel {
+		if editor_runtime.asset_browser.delete_target_path != "" {
+			delete(editor_runtime.asset_browser.delete_target_path)
+			editor_runtime.asset_browser.delete_target_path = ""
+		}
+		imgui.close_current_popup()
+	}
+
+	imgui.end_popup()
+}
+
+@(private) draw_asset_import_modal :: proc(active_folder: string) {
+	if editor_runtime.asset_browser.import_open_modal {
+		imgui.open_popup("Import Asset")
+		editor_runtime.asset_browser.import_open_modal = false
+	}
+
+	if !imgui.begin_popup_modal("Import Asset") {
+		return
+	}
+
+	imgui.text("Source:")
+	imgui.same_line()
+	if editor_runtime.asset_browser.import_source_path != "" {
+		source_c, source_err := strings.clone_to_cstring(editor_runtime.asset_browser.import_source_path)
+		if source_err == nil {
+			imgui.text("%s", source_c)
+			delete(source_c)
+		}
+	}
+
+	imgui.text("Save into current folder as:")
+	_ = imgui.input_text("Asset Name", cstring(&editor_runtime.asset_browser.import_target_name[0]), uint(len(editor_runtime.asset_browser.import_target_name)))
+
+	confirm := imgui.button("OK")
+	imgui.same_line()
+	cancel := imgui.button("Cancel")
+
+	if confirm {
+		name := strings.clone_from_cstring(cstring(&editor_runtime.asset_browser.import_target_name[0]), context.temp_allocator)
+		name = strings.trim_space(name)
+		if name == "" {
+			set_asset_browser_error("Asset name cannot be empty")
+		} else if editor_runtime.asset_browser.import_source_path == "" {
+			set_asset_browser_error("No source asset selected")
+		} else {
+			destination := strings.concatenate({active_folder, "/", name}, context.temp_allocator)
+			if err := os.copy_file(destination, editor_runtime.asset_browser.import_source_path); err != nil {
+				set_asset_browser_error(fmt.tprintf("Asset import failed: %v", err))
+			} else {
+				set_asset_browser_error("")
+				set_selected_asset_path(destination)
+				invalidate_directory_cache()
+				clear_asset_import_state()
+				imgui.close_current_popup()
+			}
+		}
+	}
+
+	if cancel {
+		clear_asset_import_state()
+		imgui.close_current_popup()
+	}
+
+	imgui.end_popup()
+}
+
 @(private) resolve_active_folder_for_asset_browser :: proc() -> string {
-	if directory_tree_selected_path == "" {
+	if editor_runtime.directory_tree.selected_path == "" {
 		return resolve_project_root_path()
 	}
 
-	if directory_tree_selected_is_dir {
-		return directory_tree_selected_path
+	if editor_runtime.directory_tree.selected_is_dir {
+		return editor_runtime.directory_tree.selected_path
 	}
 
-	dir, _ := os.split_path(directory_tree_selected_path)
+	dir, _ := os.split_path(editor_runtime.directory_tree.selected_path)
 	if dir == "" {
 		return resolve_project_root_path()
 	}
@@ -730,9 +1859,27 @@ force_default_layout_next_frame: bool
 }
 
 @(private) draw_top_toolbar :: proc() {
-	if imgui.begin("Top Toolbar", nil, {.No_Collapse, .No_Docking, .No_Move, .No_Resize}) {
+	if imgui.begin("Top Toolbar", nil, {.No_Title_Bar, .No_Collapse, .No_Docking, .No_Move, .No_Resize}) {
 		if imgui.button("Reset Layout") {
 			reset_editor_layout_to_defaults()
+		}
+
+		imgui.same_line()
+		imgui.text("Theme")
+		imgui.same_line()
+		theme_preview := ui_theme_cstring(editor_runtime.theme.active_theme)
+
+		if imgui.begin_combo("##ThemeSelector", theme_preview) {
+			order := UI_THEME_ORDER
+			labels := UI_THEME_LABELS
+			for i in 0 ..< len(order) {
+				theme := order[i]
+				label := labels[i]
+				if imgui.selectable(label, editor_runtime.theme.active_theme == theme) {
+					queue_ui_theme_change(theme)
+				}
+			}
+			imgui.end_combo()
 		}
 	}
 	imgui.end()
@@ -749,7 +1896,7 @@ force_default_layout_next_frame: bool
 	scene_width: f32 = 360
 	bottom_height: f32 = 220
 	directory_width: f32 = 220
-	top_toolbar_height: f32 = 44
+	top_toolbar_height: f32 = 34
 
 	scene_x := viewport.work_pos.x + viewport.work_size.x - scene_width
 	bottom_y := viewport.work_pos.y + viewport.work_size.y - bottom_height
@@ -826,10 +1973,28 @@ main :: proc() {
         mem.tracking_allocator_destroy(&track)
     }
     // End memory tracking
-	defer if directory_tree_selected_path != "" {
-		delete(directory_tree_selected_path)
-		directory_tree_selected_path = ""
+	defer if editor_runtime.directory_tree.selected_path != "" {
+		delete(editor_runtime.directory_tree.selected_path)
+		editor_runtime.directory_tree.selected_path = ""
 	}
+	defer if editor_runtime.asset_browser.selected_asset_path != "" {
+		delete(editor_runtime.asset_browser.selected_asset_path)
+		editor_runtime.asset_browser.selected_asset_path = ""
+	}
+	defer if editor_runtime.asset_browser.error != "" {
+		delete(editor_runtime.asset_browser.error)
+		editor_runtime.asset_browser.error = ""
+	}
+	defer if editor_runtime.asset_browser.delete_target_path != "" {
+		delete(editor_runtime.asset_browser.delete_target_path)
+		editor_runtime.asset_browser.delete_target_path = ""
+	}
+	defer if editor_runtime.directory_tree.delete_folder_target_path != "" {
+		delete(editor_runtime.directory_tree.delete_folder_target_path)
+		editor_runtime.directory_tree.delete_folder_target_path = ""
+	}
+	defer clear_directory_cache()
+	defer clear_asset_import_state()
 	defer clear_create_folder_modal_state()
 
 
@@ -846,7 +2011,9 @@ main :: proc() {
 	}
 	defer free_editor_config(&cfg)
 
-	active_app_config_directory_path = cfg.app_config_directory_path
+	editor_runtime.core.app_config_directory_path = cfg.app_config_directory_path
+	editor_runtime.theme.active_theme = ui_theme_from_string(cfg.ui_theme)
+	editor_runtime.theme.pending_theme = editor_runtime.theme.active_theme
 	requested_backend := load_requested_ui_backend(cfg.app_config_directory_path)
 	active_ui_backend = requested_backend
 
@@ -867,6 +2034,7 @@ main :: proc() {
 
 	for glfw.WindowShouldClose(window) == glfw.FALSE {
 		glfw.PollEvents()
+		process_pending_ui_theme_change()
 
 		fb_width, fb_height := glfw.GetFramebufferSize(window)
 		if fb_width <= 0 || fb_height <= 0 {
@@ -891,6 +2059,7 @@ main :: proc() {
 	}
 
 	capture_main_window_settings(&cfg.settings.window)
+	_ = set_editor_config_ui_theme(&cfg, editor_runtime.theme.active_theme)
 	_ = save_editor_config(config_path, cfg)
 	destroy_window()
 }
@@ -923,8 +2092,9 @@ main :: proc() {
 
 @(private) default_editor_config :: proc() -> Editor_Config_File {
 	return Editor_Config_File{
-		editor_name = "Ymir Editor",
-		app_config_directory_path = "App/Config",
+		editor_name = "",
+		app_config_directory_path = "",
+		ui_theme = "",
 		settings = default_editor_settings(),
 	}
 }
@@ -957,6 +2127,48 @@ main :: proc() {
 	return true
 }
 
+@(private) ensure_ui_theme :: proc(cfg: ^Editor_Config_File) -> bool {
+	normalized := ui_theme(ui_theme_from_string(cfg.ui_theme))
+	if cfg.ui_theme == normalized {
+		return true
+	}
+
+	if cfg.ui_theme != "" {
+		delete(cfg.ui_theme)
+		cfg.ui_theme = ""
+	}
+
+	cloned, err := strings.clone(normalized, context.allocator)
+	if err != nil {
+		fmt.eprintln("Failed to allocate ui theme")
+		return false
+	}
+
+	cfg.ui_theme = cloned
+	return true
+}
+
+@(private) set_editor_config_ui_theme :: proc(cfg: ^Editor_Config_File, theme: Ui_Theme) -> bool {
+	name := ui_theme(theme)
+	if cfg.ui_theme == name {
+		return true
+	}
+
+	if cfg.ui_theme != "" {
+		delete(cfg.ui_theme)
+		cfg.ui_theme = ""
+	}
+
+	cloned, err := strings.clone(name, context.allocator)
+	if err != nil {
+		fmt.eprintln("Failed to allocate ui theme")
+		return false
+	}
+
+	cfg.ui_theme = cloned
+	return true
+}
+
 @(private) free_editor_config :: proc(cfg: ^Editor_Config_File) {
 	if cfg.editor_name != "" {
 		delete(cfg.editor_name)
@@ -965,6 +2177,10 @@ main :: proc() {
 	if cfg.app_config_directory_path != "" {
 		delete(cfg.app_config_directory_path)
 		cfg.app_config_directory_path = ""
+	}
+	if cfg.ui_theme != "" {
+		delete(cfg.ui_theme)
+		cfg.ui_theme = ""
 	}
 }
 
@@ -1008,6 +2224,10 @@ main :: proc() {
 			free_editor_config(&cfg)
 			return Editor_Config_File{}, false
 		}
+		if !ensure_ui_theme(&cfg) {
+			free_editor_config(&cfg)
+			return Editor_Config_File{}, false
+		}
 		_ = save_editor_config(path, cfg)
 		return cfg, true
 	}
@@ -1030,6 +2250,10 @@ main :: proc() {
 		return Editor_Config_File{}, false
 	}
 	if !ensure_app_config_directory_path(&cfg) {
+		free_editor_config(&cfg)
+		return Editor_Config_File{}, false
+	}
+	if !ensure_ui_theme(&cfg) {
 		free_editor_config(&cfg)
 		return Editor_Config_File{}, false
 	}

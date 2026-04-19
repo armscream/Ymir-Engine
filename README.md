@@ -15,14 +15,17 @@ Alpha intent: Feature-complete Minimum-Viable-Product for 1.0 release, but not y
       Base editor - Backend selection and config saving - completed
       Base editor - window management                   - completed
       Base editor - layout reset button (to default)    - completed
-      level and layer hierarchy + selection             - basic functionality implemented
+      Base editor - editor theme/font selection         - completed
+      level and layer hierarchy + selection             - GUI implemented, non-functional
       asset management gui                              - basic functionality implemented
-      asset import gui                                  - not started
-      asset export gui                                  - not started
+      asset import gui                                  - completed
+      asset export gui                                  - completed
       gizmos                                            - not started
       level + layer editing                             - not started
       material node graph                               - not started
       animation node graph                              - not started
+      run game button from editor.. external window     - not started
+      run game from viewport in editor                  - not started
     Scene graph                                         - not started
     Functional Rendering backends                       - doing software renderer ATM
       At least a 3d PBR SDL3 GPU backend                - not started
@@ -41,9 +44,13 @@ Alpha intent: Feature-complete Minimum-Viable-Product for 1.0 release, but not y
 
 Beta intent: Polished to the point of external developer satisfaction, at least one game shipped IOT exit beta.
 
+
+Usage:
 Build helper script:
 
 - Use `build_from_game_config.ps1` to compile `App` and name the exe from `App/Config/game.json` `game_name`.
 - Output is written to `Build/<game_name>.exe`.
 - Example:
   `./build_from_game_config.ps1`
+
+For the editor you will need to compile the vendor supplied imgui_impl_sdl3, otherwise it will not work.
