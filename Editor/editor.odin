@@ -292,20 +292,20 @@ force_default_layout_next_frame: bool
 		}
 
 		root_path := resolve_project_root_path()
-		if imgui.tree_node("Ymir-Engine") {
+		root_open := imgui.tree_node("Ymir-Engine")
+		if imgui.is_item_clicked(.Right) {
+			set_directory_tree_selection(root_path, true)
+			imgui.open_popup("dir_ctx_root")
+		}
+		if imgui.begin_popup("dir_ctx_root") {
+			if imgui.menu_item("add-folder") {
+				queue_create_folder_popup(root_path)
+				imgui.close_current_popup()
+			}
+			imgui.end_popup()
+		}
+		if root_open {
 			draw_directory_entries(root_path, root_path)
-
-			if imgui.begin_popup_context_item() {
-				if imgui.menu_item("Create New Folder") {
-					queue_create_folder_popup(root_path)
-					imgui.close_current_popup()
-				}
-				imgui.end_popup()
-			}
-			if imgui.is_item_clicked(.Right) {
-				set_directory_tree_selection(root_path, true)
-			}
-
 			imgui.tree_pop()
 		}
 
@@ -368,16 +368,26 @@ force_default_layout_next_frame: bool
 			}
 
 			if imgui.tree_node_ex(entry_name_c, flags) {
+			context_menu_id := strings.concatenate({"dir_ctx::", entry.fullpath}, context.temp_allocator)
+			context_menu_id_c, ctx_alloc_err := strings.clone_to_cstring(context_menu_id)
 				delete(entry_name_c)
-				if imgui.begin_popup_context_item() {
-					if imgui.menu_item("Create New Folder") {
-						queue_create_folder_popup(entry.fullpath)
-						imgui.close_current_popup()
+				if ctx_alloc_err == nil {
+					if imgui.is_item_clicked(.Right) {
+						set_directory_tree_selection(entry.fullpath, true)
+						imgui.open_popup(context_menu_id_c)
 					}
-					imgui.end_popup()
-				}
-				if imgui.is_item_clicked(.Right) {
-					set_directory_tree_selection(entry.fullpath, true)
+					if imgui.begin_popup(context_menu_id_c) {
+						if imgui.menu_item("add-folder") {
+							queue_create_folder_popup(entry.fullpath)
+							imgui.close_current_popup()
+						}
+						if imgui.menu_item("delete-folder") {
+							delete_folder_recursive(entry.fullpath)
+							imgui.close_current_popup()
+						}
+						imgui.end_popup()
+					}
+					delete(context_menu_id_c)
 				}
 				if imgui.is_item_clicked() {
 					set_directory_tree_selection(entry.fullpath, true)
@@ -385,16 +395,26 @@ force_default_layout_next_frame: bool
 				draw_directory_entries(entry.fullpath, root_path)
 				imgui.tree_pop()
 			} else {
+				context_menu_id := strings.concatenate({"dir_ctx::", entry.fullpath}, context.temp_allocator)
+				context_menu_id_c, ctx_alloc_err := strings.clone_to_cstring(context_menu_id)
 				delete(entry_name_c)
-				if imgui.begin_popup_context_item() {
-					if imgui.menu_item("Create New Folder") {
-						queue_create_folder_popup(entry.fullpath)
-						imgui.close_current_popup()
+				if ctx_alloc_err == nil {
+					if imgui.is_item_clicked(.Right) {
+						set_directory_tree_selection(entry.fullpath, true)
+						imgui.open_popup(context_menu_id_c)
 					}
-					imgui.end_popup()
-				}
-				if imgui.is_item_clicked(.Right) {
-					set_directory_tree_selection(entry.fullpath, true)
+					if imgui.begin_popup(context_menu_id_c) {
+						if imgui.menu_item("add-folder") {
+							queue_create_folder_popup(entry.fullpath)
+							imgui.close_current_popup()
+						}
+						if imgui.menu_item("delete-folder") {
+							delete_folder_recursive(entry.fullpath)
+							imgui.close_current_popup()
+						}
+						imgui.end_popup()
+					}
+					delete(context_menu_id_c)
 				}
 				if imgui.is_item_clicked() {
 					set_directory_tree_selection(entry.fullpath, true)
@@ -425,6 +445,22 @@ force_default_layout_next_frame: bool
 				set_directory_tree_selection(entry.fullpath, false)
 			}
 		}
+	}
+}
+
+@(private) delete_folder_recursive :: proc(path: string) {
+	err := os.remove_all(path)
+	if err != nil {
+		fmt.eprintln("Failed to delete folder:", path, "-", err)
+		return
+	}
+
+	if directory_tree_selected_path != "" && directory_tree_selected_path == path {
+		parent, _ := os.split_path(path)
+		if parent == "" {
+			parent = resolve_project_root_path()
+		}
+		set_directory_tree_selection(parent, true)
 	}
 }
 

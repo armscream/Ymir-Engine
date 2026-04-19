@@ -10,8 +10,8 @@ Alpha intent: Feature-complete Minimum-Viable-Product for 1.0 release, but not y
     Editor -- Full 3d editor
       --- Important Editor features ---
       Base editor - folder hierarchy panel              - completed
-      Base editor - folder creation                     - started
-      Base editor - folder deletion                     - not started
+      Base editor - folder creation                     - completed
+      Base editor - folder deletion                     - completed
       Base editor - Backend selection and config saving - completed
       Base editor - window management                   - completed
       Base editor - layout reset button (to default)    - completed
