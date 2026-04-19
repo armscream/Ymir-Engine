@@ -58,7 +58,16 @@ active_app_config_directory_path: string
 imgui_layout_path: string
 directory_tree_selected_path: string
 directory_tree_selected_is_dir: bool
-directory_tree_filter_code_and_json_only: bool
+directory_tree_show_png: bool = true
+directory_tree_show_skm: bool = true
+directory_tree_show_sm: bool = true
+directory_tree_show_mtl: bool = true
+directory_tree_hide_non_primary_root_dirs: bool = true
+directory_tree_create_folder_parent_path: string
+directory_tree_create_folder_error: string
+directory_tree_open_create_folder_popup: bool
+directory_tree_new_folder_name: [256]u8
+force_default_layout_next_frame: bool
 
 @(private) active_game_config_path_label :: proc() -> string {
 	if active_app_config_directory_path == "" {
@@ -274,11 +283,29 @@ directory_tree_filter_code_and_json_only: bool
 
 @(private) draw_directory_tree :: proc() {
 	if imgui.begin("Directory Tree") {
-		_ = imgui.checkbox("Only .odin/.json", &directory_tree_filter_code_and_json_only)
+		if imgui.begin_combo("File-visibility", "Select file types") {
+			_ = imgui.checkbox("show .png", &directory_tree_show_png)
+			_ = imgui.checkbox("show .skm", &directory_tree_show_skm)
+			_ = imgui.checkbox("show .sm", &directory_tree_show_sm)
+			_ = imgui.checkbox("show .mtl", &directory_tree_show_mtl)
+			imgui.end_combo()
+		}
 
 		root_path := resolve_project_root_path()
 		if imgui.tree_node("Ymir-Engine") {
-			draw_directory_entries(root_path)
+			draw_directory_entries(root_path, root_path)
+
+			if imgui.begin_popup_context_item() {
+				if imgui.menu_item("Create New Folder") {
+					queue_create_folder_popup(root_path)
+					imgui.close_current_popup()
+				}
+				imgui.end_popup()
+			}
+			if imgui.is_item_clicked(.Right) {
+				set_directory_tree_selection(root_path, true)
+			}
+
 			imgui.tree_pop()
 		}
 
@@ -286,8 +313,13 @@ directory_tree_filter_code_and_json_only: bool
 		imgui.text("Selected:")
 		if directory_tree_selected_path != "" {
 			imgui.same_line()
-			imgui.text(directory_tree_selected_path)
+			selected_path_c, alloc_err := strings.clone_to_cstring(directory_tree_selected_path)
+			if alloc_err == nil {
+				imgui.text("%s", selected_path_c)
+				delete(selected_path_c)
+			}
 		}
+		draw_create_folder_modal()
 	}
 	imgui.end()
 }
@@ -305,7 +337,7 @@ directory_tree_filter_code_and_json_only: bool
 	return "."
 }
 
-@(private) draw_directory_entries :: proc(path: string) {
+@(private) draw_directory_entries :: proc(path: string, root_path: string) {
 	entries, err := os.read_all_directory_by_path(path, context.allocator)
 	if err != nil {
 		imgui.text("Failed to read directory")
@@ -319,19 +351,51 @@ directory_tree_filter_code_and_json_only: bool
 			if entry.name == ".git" {
 				continue
 			}
+			if directory_tree_hide_non_primary_root_dirs && path == root_path {
+				if entry.name != "App" && entry.name != "Editor" {
+					continue
+				}
+			}
 
 			flags: imgui.Tree_Node_Flags = {.Span_Avail_Width}
 			if directory_tree_selected_is_dir && directory_tree_selected_path == entry.fullpath {
 				flags += {.Selected}
 			}
 
-			if imgui.tree_node_ex(entry.name, flags) {
+			entry_name_c, name_alloc_err := strings.clone_to_cstring(entry.name)
+			if name_alloc_err != nil {
+				continue
+			}
+
+			if imgui.tree_node_ex(entry_name_c, flags) {
+				delete(entry_name_c)
+				if imgui.begin_popup_context_item() {
+					if imgui.menu_item("Create New Folder") {
+						queue_create_folder_popup(entry.fullpath)
+						imgui.close_current_popup()
+					}
+					imgui.end_popup()
+				}
+				if imgui.is_item_clicked(.Right) {
+					set_directory_tree_selection(entry.fullpath, true)
+				}
 				if imgui.is_item_clicked() {
 					set_directory_tree_selection(entry.fullpath, true)
 				}
-				draw_directory_entries(entry.fullpath)
+				draw_directory_entries(entry.fullpath, root_path)
 				imgui.tree_pop()
 			} else {
+				delete(entry_name_c)
+				if imgui.begin_popup_context_item() {
+					if imgui.menu_item("Create New Folder") {
+						queue_create_folder_popup(entry.fullpath)
+						imgui.close_current_popup()
+					}
+					imgui.end_popup()
+				}
+				if imgui.is_item_clicked(.Right) {
+					set_directory_tree_selection(entry.fullpath, true)
+				}
 				if imgui.is_item_clicked() {
 					set_directory_tree_selection(entry.fullpath, true)
 				}
@@ -350,11 +414,123 @@ directory_tree_filter_code_and_json_only: bool
 				flags += {.Selected}
 			}
 
-			_ = imgui.tree_node_ex(entry.name, flags)
+			entry_name_c, name_alloc_err := strings.clone_to_cstring(entry.name)
+			if name_alloc_err != nil {
+				continue
+			}
+
+			_ = imgui.tree_node_ex(entry_name_c, flags)
+			delete(entry_name_c)
 			if imgui.is_item_clicked() {
 				set_directory_tree_selection(entry.fullpath, false)
 			}
 		}
+	}
+}
+
+@(private) queue_create_folder_popup :: proc(parent_path: string) {
+	clear_create_folder_modal_state()
+
+	cloned_parent, err := strings.clone(parent_path, context.allocator)
+	if err != nil {
+		return
+	}
+	directory_tree_create_folder_parent_path = cloned_parent
+
+	for i in 0 ..< len(directory_tree_new_folder_name) {
+		directory_tree_new_folder_name[i] = 0
+	}
+	default_name := "New Folder"
+	copy(directory_tree_new_folder_name[:], default_name)
+
+	directory_tree_open_create_folder_popup = true
+}
+
+@(private) draw_create_folder_modal :: proc() {
+	if directory_tree_open_create_folder_popup {
+		imgui.open_popup("Create Folder")
+		directory_tree_open_create_folder_popup = false
+	}
+
+	if imgui.begin_popup_modal("Create Folder") {
+		if imgui.is_window_appearing() {
+			imgui.set_keyboard_focus_here()
+		}
+
+		imgui.text("Parent:")
+		imgui.same_line()
+		if directory_tree_create_folder_parent_path != "" {
+			parent_c, alloc_err := strings.clone_to_cstring(directory_tree_create_folder_parent_path)
+			if alloc_err == nil {
+				imgui.text("%s", parent_c)
+				delete(parent_c)
+			}
+		}
+
+		_ = imgui.input_text("Folder Name", cstring(&directory_tree_new_folder_name[0]), uint(len(directory_tree_new_folder_name)))
+
+		if directory_tree_create_folder_error != "" {
+			err_c, err_alloc := strings.clone_to_cstring(directory_tree_create_folder_error)
+			if err_alloc == nil {
+				imgui.text("%s", err_c)
+				delete(err_c)
+			}
+		}
+
+		confirm := imgui.button("OK")
+		imgui.same_line()
+		cancel := imgui.button("Cancel")
+
+		if confirm {
+			folder_name := strings.clone_from_cstring(cstring(&directory_tree_new_folder_name[0]), context.temp_allocator)
+			folder_name = strings.trim_space(folder_name)
+			if folder_name == "" {
+				set_create_folder_error("Folder name cannot be empty")
+			} else {
+				new_folder_path := strings.concatenate({directory_tree_create_folder_parent_path, "/", folder_name}, context.temp_allocator)
+				if err := os.make_directory(new_folder_path); err != nil {
+					if err == .Exist {
+						set_create_folder_error("Folder already exists")
+					} else {
+						set_create_folder_error(fmt.tprintf("Failed to create folder: %v", err))
+					}
+				} else {
+					set_directory_tree_selection(new_folder_path, true)
+					clear_create_folder_modal_state()
+					imgui.close_current_popup()
+				}
+			}
+		}
+
+		if cancel {
+			clear_create_folder_modal_state()
+			imgui.close_current_popup()
+		}
+
+		imgui.end_popup()
+	}
+}
+
+@(private) set_create_folder_error :: proc(message: string) {
+	if directory_tree_create_folder_error != "" {
+		delete(directory_tree_create_folder_error)
+		directory_tree_create_folder_error = ""
+	}
+
+	cloned, err := strings.clone(message, context.allocator)
+	if err == nil {
+		directory_tree_create_folder_error = cloned
+	}
+}
+
+@(private) clear_create_folder_modal_state :: proc() {
+	if directory_tree_create_folder_parent_path != "" {
+		delete(directory_tree_create_folder_parent_path)
+		directory_tree_create_folder_parent_path = ""
+	}
+	if directory_tree_create_folder_error != "" {
+		delete(directory_tree_create_folder_error)
+		directory_tree_create_folder_error = ""
 	}
 }
 
@@ -382,12 +558,31 @@ directory_tree_filter_code_and_json_only: bool
 }
 
 @(private) directory_tree_file_visible :: proc(name: string) -> bool {
-	if !directory_tree_filter_code_and_json_only {
-		return true
+	name_lower, _ := strings.to_lower(name, context.temp_allocator)
+
+	if strings.has_suffix(name_lower, ".odin") ||
+		strings.has_suffix(name_lower, ".ini") ||
+		strings.has_suffix(name_lower, ".ps1") ||
+		strings.has_suffix(name_lower, ".gitignore") ||
+		strings.has_suffix(name_lower, ".md") ||
+		strings.has_suffix(name_lower, ".exe") {
+		return false
 	}
 
-	name_lower, _ := strings.to_lower(name, context.temp_allocator)
-	return strings.has_suffix(name_lower, ".odin") || strings.has_suffix(name_lower, ".json")
+	if strings.has_suffix(name_lower, ".png") {
+		return directory_tree_show_png
+	}
+	if strings.has_suffix(name_lower, ".skm") {
+		return directory_tree_show_skm
+	}
+	if strings.has_suffix(name_lower, ".sm") {
+		return directory_tree_show_sm
+	}
+	if strings.has_suffix(name_lower, ".mtl") {
+		return directory_tree_show_mtl
+	}
+
+	return true
 }
 
 @(private) set_directory_tree_selection :: proc(path: string, is_dir: bool) {
@@ -408,13 +603,67 @@ directory_tree_filter_code_and_json_only: bool
 
 @(private) draw_asset_browser :: proc() {
 	if imgui.begin("Asset Browser") {
-		imgui.separator_text("Recent Assets")
-		_ = imgui.selectable("terrain/grass_albedo.png")
-		_ = imgui.selectable("materials/rock.mat")
-		_ = imgui.selectable("meshes/tree_01.glb")
-		_ = imgui.selectable("levels/test_map.level")
+		active_folder := resolve_active_folder_for_asset_browser()
+
+		imgui.separator_text("Assets")
+		imgui.text("Folder:")
+		imgui.same_line()
+		folder_c, folder_alloc_err := strings.clone_to_cstring(active_folder)
+		if folder_alloc_err == nil {
+			imgui.text("%s", folder_c)
+			delete(folder_c)
+		}
+
+		entries, read_err := os.read_all_directory_by_path(active_folder, context.allocator)
+		if read_err != nil {
+			imgui.text("Failed to read active folder")
+			imgui.end()
+			return
+		}
+		defer os.file_info_slice_delete(entries, context.allocator)
+		sort_directory_entries(entries)
+
+		asset_count := 0
+		for entry in entries {
+			if entry.type == .Directory {
+				continue
+			}
+			if !directory_tree_file_visible(entry.name) {
+				continue
+			}
+
+			entry_name_c, entry_name_err := strings.clone_to_cstring(entry.name)
+			if entry_name_err != nil {
+				continue
+			}
+
+			_ = imgui.selectable(entry_name_c)
+			delete(entry_name_c)
+			asset_count += 1
+		}
+
+		if asset_count == 0 {
+			imgui.text("No matching files in active folder")
+		}
 	}
 	imgui.end()
+}
+
+@(private) resolve_active_folder_for_asset_browser :: proc() -> string {
+	if directory_tree_selected_path == "" {
+		return resolve_project_root_path()
+	}
+
+	if directory_tree_selected_is_dir {
+		return directory_tree_selected_path
+	}
+
+	dir, _ := os.split_path(directory_tree_selected_path)
+	if dir == "" {
+		return resolve_project_root_path()
+	}
+
+	return dir
 }
 
 @(private) draw_scene_panel :: proc() {
@@ -434,6 +683,25 @@ directory_tree_filter_code_and_json_only: bool
 	imgui.end()
 }
 
+@(private) reset_editor_layout_to_defaults :: proc() {
+	force_default_layout_next_frame = true
+
+	if imgui_layout_path != "" && os.exists(imgui_layout_path) {
+		if err := os.remove(imgui_layout_path); err != nil {
+			fmt.eprintln("Failed to remove editor layout file:", imgui_layout_path, "-", err)
+		}
+	}
+}
+
+@(private) draw_top_toolbar :: proc() {
+	if imgui.begin("Top Toolbar", nil, {.No_Collapse, .No_Docking, .No_Move, .No_Resize}) {
+		if imgui.button("Reset Layout") {
+			reset_editor_layout_to_defaults()
+		}
+	}
+	imgui.end()
+}
+
 @(private) draw_editor_ui :: proc() {
 	viewport := imgui.get_main_viewport()
 	if viewport == nil {
@@ -445,29 +713,64 @@ directory_tree_filter_code_and_json_only: bool
 	scene_width: f32 = 360
 	bottom_height: f32 = 220
 	directory_width: f32 = 220
+	top_toolbar_height: f32 = 44
 
 	scene_x := viewport.work_pos.x + viewport.work_size.x - scene_width
 	bottom_y := viewport.work_pos.y + viewport.work_size.y - bottom_height
-	upper_height := viewport.work_size.y - bottom_height
+	upper_y := viewport.work_pos.y + top_toolbar_height
+	upper_height := viewport.work_size.y - bottom_height - top_toolbar_height
 	asset_x := viewport.work_pos.x + directory_width
 	asset_width := viewport.work_size.x - directory_width
 	workspace_width := scene_x - viewport.work_pos.x
 
-	imgui.set_next_window_pos(viewport.work_pos, .First_Use_Ever)
-	imgui.set_next_window_size(imgui.Vec2{workspace_width, upper_height}, .First_Use_Ever)
+	if force_default_layout_next_frame {
+		imgui.set_next_window_pos(viewport.work_pos, .Always)
+		imgui.set_next_window_size(imgui.Vec2{viewport.work_size.x, top_toolbar_height}, .Always)
+	} else {
+		imgui.set_next_window_pos(viewport.work_pos, .First_Use_Ever)
+		imgui.set_next_window_size(imgui.Vec2{viewport.work_size.x, top_toolbar_height}, .First_Use_Ever)
+	}
+	draw_top_toolbar()
+
+	if force_default_layout_next_frame {
+		imgui.set_next_window_pos(imgui.Vec2{viewport.work_pos.x, upper_y}, .Always)
+		imgui.set_next_window_size(imgui.Vec2{workspace_width, upper_height}, .Always)
+	} else {
+		imgui.set_next_window_pos(imgui.Vec2{viewport.work_pos.x, upper_y}, .First_Use_Ever)
+		imgui.set_next_window_size(imgui.Vec2{workspace_width, upper_height}, .First_Use_Ever)
+	}
 	draw_workspace_panel()
 
-	imgui.set_next_window_pos(imgui.Vec2{scene_x, viewport.work_pos.y}, .First_Use_Ever)
-	imgui.set_next_window_size(imgui.Vec2{scene_width, upper_height}, .First_Use_Ever)
+	if force_default_layout_next_frame {
+		imgui.set_next_window_pos(imgui.Vec2{scene_x, upper_y}, .Always)
+		imgui.set_next_window_size(imgui.Vec2{scene_width, upper_height}, .Always)
+	} else {
+		imgui.set_next_window_pos(imgui.Vec2{scene_x, upper_y}, .First_Use_Ever)
+		imgui.set_next_window_size(imgui.Vec2{scene_width, upper_height}, .First_Use_Ever)
+	}
 	draw_scene_panel()
 
-	imgui.set_next_window_pos(imgui.Vec2{viewport.work_pos.x, bottom_y}, .First_Use_Ever)
-	imgui.set_next_window_size(imgui.Vec2{directory_width, bottom_height}, .First_Use_Ever)
+	if force_default_layout_next_frame {
+		imgui.set_next_window_pos(imgui.Vec2{viewport.work_pos.x, bottom_y}, .Always)
+		imgui.set_next_window_size(imgui.Vec2{directory_width, bottom_height}, .Always)
+	} else {
+		imgui.set_next_window_pos(imgui.Vec2{viewport.work_pos.x, bottom_y}, .First_Use_Ever)
+		imgui.set_next_window_size(imgui.Vec2{directory_width, bottom_height}, .First_Use_Ever)
+	}
 	draw_directory_tree()
 
-	imgui.set_next_window_pos(imgui.Vec2{asset_x, bottom_y}, .First_Use_Ever)
-	imgui.set_next_window_size(imgui.Vec2{asset_width, bottom_height}, .First_Use_Ever)
+	if force_default_layout_next_frame {
+		imgui.set_next_window_pos(imgui.Vec2{asset_x, bottom_y}, .Always)
+		imgui.set_next_window_size(imgui.Vec2{asset_width, bottom_height}, .Always)
+	} else {
+		imgui.set_next_window_pos(imgui.Vec2{asset_x, bottom_y}, .First_Use_Ever)
+		imgui.set_next_window_size(imgui.Vec2{asset_width, bottom_height}, .First_Use_Ever)
+	}
 	draw_asset_browser()
+
+	if force_default_layout_next_frame {
+		force_default_layout_next_frame = false
+	}
 }
 
 
@@ -491,6 +794,7 @@ main :: proc() {
 		delete(directory_tree_selected_path)
 		directory_tree_selected_path = ""
 	}
+	defer clear_create_folder_modal_state()
 
 
 	startup_mode := ye.Engine_Startup.editor

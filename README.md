@@ -9,8 +9,16 @@ Alpha intent: Feature-complete Minimum-Viable-Product for 1.0 release, but not y
   
     Editor -- Full 3d editor
       --- Important Editor features ---
-      level and layer hierarchy + selection             - not started
-      asset management gui                              - not started
+      Base editor - folder hierarchy panel              - completed
+      Base editor - folder creation                     - started
+      Base editor - folder deletion                     - not started
+      Base editor - Backend selection and config saving - completed
+      Base editor - window management                   - completed
+      Base editor - layout reset button (to default)    - completed
+      level and layer hierarchy + selection             - basic functionality implemented
+      asset management gui                              - basic functionality implemented
+      asset import gui                                  - not started
+      asset export gui                                  - not started
       gizmos                                            - not started
       level + layer editing                             - not started
       material node graph                               - not started
@@ -18,7 +26,7 @@ Alpha intent: Feature-complete Minimum-Viable-Product for 1.0 release, but not y
     Scene graph                                         - not started
     Functional Rendering backends                       - doing software renderer ATM
       At least a 3d PBR SDL3 GPU backend                - not started
-    Complete level and layer saving with API calls      - in progress, saves and loads basic level data.
+    Complete level and layer saving with API calls      - in progress, saves and loads basic level data.                                         - very basic
     ECS                                                 - Not started, but may just allow for end user to use own.. not sure yet.
     In-game UI system.                                  - not started
     logger                                              - not started
