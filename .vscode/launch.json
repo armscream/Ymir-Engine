@@ -23,7 +23,7 @@
             "type": "node-terminal",
             "request": "launch",
             "cwd": "${workspaceFolder}",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"New-Item -ItemType Directory -Path 'Build' -Force | Out-Null; odin build Editor -out:Build/Editor.exe\""
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"New-Item -ItemType Directory -Path 'Build' -Force | Out-Null; odin build Editor -out:Build/Editor.exe -subsystem:windows\""
         },
         {
             "name": "Build and Run Editor",

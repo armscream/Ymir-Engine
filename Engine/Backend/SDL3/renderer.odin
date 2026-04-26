@@ -1,15 +1,13 @@
-// Software renderer backend for Ymir Engine.
-package soft
+package SDLRenderer3
 
 import "vendor:sdl3"
-import "core:fmt"
 
 draw_frame :: proc(runtime: rawptr, screen_width: i32, screen_height: i32) {
 	_ = runtime
 
     // Check if window and renderer are initialized before drawing, dont draw if window minimized.
 	if window == nil || renderer == nil {
-        fmt.println("Software renderer window or renderer not initialized")
+        fmt.println("SDL3 renderer window or renderer not initialized")
 		return
 	}
     flags := sdl3.GetWindowFlags(window)

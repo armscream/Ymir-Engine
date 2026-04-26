@@ -26,6 +26,7 @@ Engine_Startup :: enum {
 // TODO: split renderer/window settings from gameplay config as project grows.
 Game_Config :: struct {
     renderer_backend: string,
+    editor_backend:   string,
     game_name:        string,
     window_x:         i32,
     window_y:         i32,
@@ -102,6 +103,7 @@ should_quit :: proc(runtime: ^Runtime_State) -> bool {
 // IMPORTANT: call this exactly once per config instance.
 @(private) free_game_config :: proc(config: ^Game_Config) {
     delete(config.renderer_backend)
+    delete(config.editor_backend)
     delete(config.game_name)
     delete(config.keybinds_path)
     for path in config.levels do delete(path)

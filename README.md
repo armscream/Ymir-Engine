@@ -30,7 +30,7 @@ Alpha intent: Feature-complete Minimum-Viable-Product for 1.0 release, but not y
     Functional Rendering backends                       - doing software renderer ATM
       At least a 3d PBR SDL3 GPU backend                - not started
     Complete level and layer saving with API calls      - in progress, saves and loads basic level data.                                         - very basic
-    ECS                                                 - Not started, but may just allow for end user to use own.. not sure yet.
+    ECS                                                 - Not started, but may just allow      for end user to use own.. not sure yet.
     In-game UI system.                                  - not started
     logger                                              - not started
     game-config load/save                               - completed
