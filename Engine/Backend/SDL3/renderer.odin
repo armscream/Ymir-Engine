@@ -1,6 +1,7 @@
 package SDLRenderer3
 
 import "vendor:sdl3"
+import "core:fmt"
 
 draw_frame :: proc(runtime: rawptr, screen_width: i32, screen_height: i32) {
 	_ = runtime

@@ -1,8 +1,11 @@
 package ye
 
+import "vendor:vulkan"
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
+import vk "./Backend/Vulkan"
+import sdl3 "./Backend/SDL3"
 import soft "./Backend/Software" // Software renderer backend
 
 game_config_path :: "Config/game.json"
@@ -58,24 +61,12 @@ Runtime_State :: struct {
 }
 
 init_engine :: proc (config: Game_Config) {
-    
-
     switch config.renderer_backend {
     case "SDL3":
-        fmt.println("SDL3 Renderer not implemented yet")
-        //sdl3.Init(sdl3.INIT_VIDEO)
-    
-    case "OpenGL":
-        fmt.println("OpenGL Renderer not implemented yet")
-        // OpenGL initialization code would go here
-
-    case "Raylib":
-        fmt.println("Raylib Renderer not implemented yet")
-        // Raylib initialization code would go here
+        _ = sdl3.init_window(config.game_name, config.window_x, config.window_y, config.window_width, config.window_height)
 
     case "Vulkan":
-        fmt.println("Vulkan Renderer not implemented yet")
-        // Vulkan initialization code would go here
+        _ = vk.init_window(config.game_name, config.window_x, config.window_y, config.window_width, config.window_height)
 
     case "Software":
         _ = soft.init_window(config.game_name, config.window_x, config.window_y, config.window_width, config.window_height)
@@ -236,17 +227,9 @@ shutdown_runtime :: proc(runtime: ^Runtime_State) {
 draw_frame :: proc(runtime: ^Runtime_State) {
     switch runtime.config.renderer_backend {
     case "SDL3":
-        fmt.println("SDL3 Renderer draw_frame not implemented yet")
-        // SDL3 drawing code would go here
-    case "OpenGL":
-        fmt.println("OpenGL Renderer draw_frame not implemented yet")
-        // OpenGL drawing code would go here
-    case "Raylib":
-        fmt.println("Raylib Renderer draw_frame not implemented yet")
-        // Raylib drawing code would go here
+        sdl3.draw_frame(runtime, runtime.config.window_width, runtime.config.window_height)
     case "Vulkan":
-        fmt.println("Vulkan Renderer draw_frame not implemented yet")
-        // Vulkan drawing code would go here
+        vk.draw_frame(runtime, runtime.config.window_width, runtime.config.window_height)
     case "Software":
         soft.draw_frame(runtime, runtime.config.window_width, runtime.config.window_height)
     case "undefined":
