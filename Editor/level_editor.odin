@@ -75,16 +75,16 @@ Level_Editor_Config_File :: struct {
 }
 
 @(private) reset_level_editor_camera_defaults :: proc(state: ^Level_Editor_State) {
-	state.camera_position[0] = 0
-	state.camera_position[1] = 0
-	state.camera_position[2] = 0
-	state.camera_rotation.x = 0 //{0, 0, 0, 1} // order for quat is xyzw 
-	state.camera_rotation.y = 0
-	state.camera_rotation.z = 0
-	state.camera_rotation.w = 1
+	state.cameras.position[0] = 0
+	state.cameras.position[1] = 0
+	state.cameras.position[2] = 0
+	state.cameras.rotation.x = 0 //{0, 0, 0, 1} // order for quat is xyzw 
+	state.cameras.rotation.y = 0
+	state.cameras.rotation.z = 0
+	state.cameras.rotation.w = 1
 
-	state.camera_move_speed = 6.0
-	state.camera_mouse_sensitivity = 0.0025
+	state.cameras.move_speed = 6.0
+	state.cameras.mouse_sensitivity = 0.0025
 
 	state.move_forward = false
 	state.move_backward = false

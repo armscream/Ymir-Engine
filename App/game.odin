@@ -14,5 +14,5 @@ test :: proc() {
 }
 
 run :: proc() {
-	// test()	
+	//test()	
 }
