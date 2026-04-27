@@ -1,12 +1,16 @@
 package ye
 
+// Backends
 import sdl3 "./Backend/SDL3"
 import soft "./Backend/Software"
 import vk "./Backend/Vulkan"
+import glog "./glogger"
+// Core
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
-import "vendor:vulkan" // Software renderer backend
+// Vendor
+import "vendor:vulkan" 
 
 game_config_path :: "Config/game.json"
 
@@ -60,7 +64,7 @@ Runtime_State :: struct {
 	game_config_path: string,
 }
 
-init_engine :: proc(config: Game_Config) {
+init_engine :: proc(config: Game_Config) -> (ok: bool) {
 	switch config.renderer_backend {
 	case "SDL3":
 		_ = sdl3.init_window(
@@ -92,7 +96,8 @@ init_engine :: proc(config: Game_Config) {
 	case "undefined":
 		fmt.println("Unknown renderer backend: ", config.renderer_backend)
 	}
-
+    glog.initialize()
+    return true
 }
 
 should_quit :: proc(runtime: ^Runtime_State) -> bool {

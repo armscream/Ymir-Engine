@@ -40,46 +40,61 @@
 //    - Handle window close/minimize/fullscreen
 //    - Present frame and synchronize
 
-
 package Vulkan
-
+// Engine
+import glog "../../glogger"
+// Core
+import "base:runtime"
+import "core:log"
 import "core:c"
 import "core:strings"
-import "vendor:glfw"
+// Vendor
 import vk "vendor:vulkan"
+import glfw "vendor:glfw"
 
 window: glfw.WindowHandle  
-// vk.load_proc_addresses_global(rawptr(glfw.GetInstanceProcAddress))   
 
+glfw_error_callback :: proc "c" (error: i32, description: cstring) {
+    context = runtime.default_context()
+    context.logger = glog.g_logger
+    log.errorf("GLFW [%d]: %s", error, description)
+}
+
+@require_results
 init_window :: proc(window_name: string, x: i32, y: i32, width: i32, height: i32) -> glfw.WindowHandle {
-    if !glfw.Init() {
-        return nil
-    }
+    // We initialize GLFW and create a window with it.
+    ensure(bool(glfw.Init()), "Failed to initialize GLFW")
 
-    window_name_c, _ := strings.clone_to_cstring(window_name)
+    glfw.SetErrorCallback(glfw_error_callback)
+
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+
+    window_name_c, _ := strings.clone_to_cstring(window_name, context.temp_allocator)
     if window_name_c == nil {
         glfw.Terminate()
         return nil
     }
-    defer delete(window_name_c)
 
     glfw.WindowHint(glfw.CLIENT_API, glfw.NO_API)  // Correct for Vulkan
     glfw.WindowHint(glfw.RESIZABLE, glfw.TRUE)
 
+    pos_x := c.int(x)
+    pos_y := c.int(y)
     window = glfw.CreateWindow(width, height, window_name_c, nil, nil)
     if window == nil {
+        log.error("Failed to create a Window")
         glfw.Terminate()
         return nil
     }
-
-    pos_x := c.int(x)
-    pos_y := c.int(y)
+    /*
     if x < 0 {
         glfw.SetWindowPos(window, 0,0) // Centered horizontally
     }
     if y < 0 {
         glfw.SetWindowPos(window, 0,0) // Centered vertically
     }
+    */
+    
 
     glfw.SetWindowPos(window, pos_x, pos_y)
     return window
@@ -124,3 +139,14 @@ get_window_state :: proc(x: ^i32, y: ^i32, width: ^i32, height: ^i32, fullscreen
     fullscreen^ = glfw.GetWindowMonitor(window) != nil
     return true
 }
+
+
+// -----------------------------------------------------------------------------
+// Callbacks
+// -----------------------------------------------------------------------------
+
+callback_framebuffer_size :: proc "c" (window: glfw.WindowHandle, width, height: i32) {
+    // TODO: Implement later
+}
+
+
