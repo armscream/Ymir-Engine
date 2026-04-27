@@ -273,7 +273,7 @@ draw_frame :: proc(runtime: ^Runtime_State) {
 	case "SDL3":
 		sdl3.draw_frame(runtime, runtime.config.window_width, runtime.config.window_height)
 	case "Vulkan":
-		vk.draw_frame(runtime, runtime.config.window_width, runtime.config.window_height)
+		result := vk.engine_run(runtime)
 	case "Software":
 		soft.draw_frame(runtime, runtime.config.window_width, runtime.config.window_height)
 	case "undefined":
