@@ -6,18 +6,16 @@ import "vendor:glfw"
 
 draw_frame :: proc(runtime: rawptr, screen_width: i32, screen_height: i32) {
     _ = runtime
-
-    // Check if window is initialized before drawing
+    glfw.PollEvents() // Poll window events (e.g., close, minimize)
     if window == nil {
         fmt.println("Vulkan renderer window not initialized")
         return
     }
-
-    // Check if window is minimized (iconified)
     if glfw.GetWindowAttrib(window, glfw.ICONIFIED) != 0 {
         // Skip rendering while minimized
         return
     }
+    // End GLFW stuff
 
     // --- Vulkan frame begin ---
     // 1. Acquire next image from swapchain
