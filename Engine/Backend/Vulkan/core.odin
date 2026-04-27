@@ -10,6 +10,14 @@ import "core:fmt"
 import vk "vendor:vulkan"
 import glfw "vendor:glfw"
 
+RENDERMODE :: enum {
+    FIFO_RELAXED, // Tutorial uses this one
+    MAILBOX, // Preferred later
+    IMMEDIATE,
+    FIFO,
+}
+RENDER_MODE := RENDERMODE.FIFO_RELAXED
+
 @(require_results)
 vk_check :: #force_inline proc(
     res: vk.Result,
@@ -28,16 +36,16 @@ vk_check :: #force_inline proc(
 @(require_results)
 engine_run :: proc(runtime: rawptr) -> (ok: bool) {
     _ = runtime
-    if window == nil {
+    if self.window == nil {
         fmt.println("Vulkan renderer window not initialized")
         return
     }
     log.info("Entering main loop...")
 
-    loop: for !glfw.WindowShouldClose(window) {
+    loop: for !glfw.WindowShouldClose(self.window) {
         glfw.PollEvents() // Poll window events (e.g., close, minimize)
         // Do not draw if we are minimized
-        if glfw.GetWindowAttrib(window, glfw.ICONIFIED) != 0 {
+        if glfw.GetWindowAttrib(self.window, glfw.ICONIFIED) != 0 {
             glfw.WaitEvents() // Wait to avoid endless spinning
             continue
         }

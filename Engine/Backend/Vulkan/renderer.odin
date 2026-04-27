@@ -1,11 +1,9 @@
 package Vulkan
 
 // Core
-import "core:fmt"
 
 // Vendor
 import vk "vendor:vulkan"
-import glfw "vendor:glfw"
 
 
 

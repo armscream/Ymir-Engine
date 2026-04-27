@@ -49,6 +49,7 @@ Level_Data :: struct {
 	name: string,
 }
 
+
 @(private)
 free_level_data :: proc(level_data: ^Level_Data) {
 	delete(level_data.name)
@@ -76,7 +77,7 @@ init_engine :: proc(config: Game_Config) -> (ok: bool) {
 		)
 
 	case "Vulkan":
-		_ = vk.init_window(
+		vk.init_window(
 			config.game_name,
 			config.window_x,
 			config.window_y,
@@ -187,7 +188,7 @@ shutdown_runtime :: proc(runtime: ^Runtime_State) {
 	// Capture latest software window state so config persists user changes.
 	switch runtime.config.renderer_backend {
 	case "SDL3":
-	// SDL3 cleanup code would go here
+	// SDL3 cleanup code goes here
         x := runtime.config.window_x
 		y := runtime.config.window_y
 		width := runtime.config.window_width
@@ -201,7 +202,7 @@ shutdown_runtime :: proc(runtime: ^Runtime_State) {
 			runtime.config.fullscreen = fullscreen
 		}
 	case "Vulkan":
-	// Vulkan cleanup code would go here
+	// Vulkan cleanup code goes here
         x := runtime.config.window_x
 		y := runtime.config.window_y
 		width := runtime.config.window_width
@@ -215,6 +216,7 @@ shutdown_runtime :: proc(runtime: ^Runtime_State) {
             runtime.config.fullscreen = fullscreen
         }
 	case "Software":
+    // Software cleanup code goes here
 		x := runtime.config.window_x
 		y := runtime.config.window_y
 		width := runtime.config.window_width
@@ -230,7 +232,7 @@ shutdown_runtime :: proc(runtime: ^Runtime_State) {
 	case "undefined":
 		fmt.println("Unknown renderer backend: ", runtime.config.renderer_backend)
 	}
-
+    // Write config and level data back to disk on shutdown.
 	if config_out, err := json.marshal(runtime.config, allocator = context.temp_allocator);
 	   err == nil {
 		_ = os.write_entire_file(

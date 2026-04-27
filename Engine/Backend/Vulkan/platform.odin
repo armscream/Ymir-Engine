@@ -52,15 +52,14 @@ import "core:strings"
 import vk "vendor:vulkan"
 import glfw "vendor:glfw"
 
-window: glfw.WindowHandle  
-
 glfw_error_callback :: proc "c" (error: i32, description: cstring) {
     context = runtime.default_context()
     context.logger = glog.g_logger
     log.errorf("GLFW [%d]: %s", error, description)
 }
 
-@require_results
+self := Engine {}
+
 init_window :: proc(window_name: string, x: i32, y: i32, width: i32, height: i32) -> glfw.WindowHandle {
     // We initialize GLFW and create a window with it.
     ensure(bool(glfw.Init()), "Failed to initialize GLFW")
@@ -80,30 +79,28 @@ init_window :: proc(window_name: string, x: i32, y: i32, width: i32, height: i32
 
     pos_x := c.int(x)
     pos_y := c.int(y)
-    window = glfw.CreateWindow(width, height, window_name_c, nil, nil)
-    if window == nil {
+    self.window = glfw.CreateWindow(width, height, window_name_c, nil, nil)
+    if self.window == nil {
         log.error("Failed to create a Window")
         glfw.Terminate()
         return nil
     }
-    /*
-    if x < 0 {
-        glfw.SetWindowPos(window, 0,0) // Centered horizontally
-    }
-    if y < 0 {
-        glfw.SetWindowPos(window, 0,0) // Centered vertically
-    }
-    */
-    
+    glfw.SetWindowPos(self.window, pos_x, pos_y)
 
-    glfw.SetWindowPos(window, pos_x, pos_y)
-    return window
-}   
+    if !engine_init(&self) {
+        log.error("Failed to initialize Vulkan engine")
+        shutdown_window()
+        return nil
+    }
+
+    return self.window
+}
+
 
 shutdown_window :: proc() {
-    if window != nil {
-        glfw.DestroyWindow(window)
-        window = nil
+    if self.window != nil {
+        glfw.DestroyWindow(self.window)
+        self.window = nil
     }
     glfw.Terminate()
 }
@@ -117,26 +114,26 @@ shutdown_window :: proc() {
 }
 
 poll_should_quit :: proc(escape_key: i32) -> bool {
-    if window == nil {
+    if self.window == nil {
         return false
     }
     if is_escape_binding(escape_key) {
-        return bool(glfw.WindowShouldClose(window))
+        return bool(glfw.WindowShouldClose(self.window))
     }
     return false
 }
 
 get_window_state :: proc(x: ^i32, y: ^i32, width: ^i32, height: ^i32, fullscreen: ^bool) -> bool {
-    if window == nil {
+    if self.window == nil {
         return false
     }
-    xpos, ypos := glfw.GetWindowPos(window)
-    width_c, height_c := glfw.GetWindowSize(window)
+    xpos, ypos := glfw.GetWindowPos(self.window)
+    width_c, height_c := glfw.GetWindowSize(self.window)
     x^ = xpos
     y^ = ypos
     width^ = width_c
     height^ = height_c
-    fullscreen^ = glfw.GetWindowMonitor(window) != nil
+    fullscreen^ = glfw.GetWindowMonitor(self.window) != nil
     return true
 }
 
