@@ -25,7 +25,6 @@ renderer_backends :: enum {
 Engine_Startup :: enum {
 	game,
 	editor,
-    debug,
 }
 
 // Main game config loaded at boot.
@@ -65,7 +64,7 @@ Runtime_State :: struct {
 	game_config_path: string,
 }
 
-init_engine :: proc(config: Game_Config) -> (ok: bool) {
+init_engine :: proc(config: Game_Config, debug: bool) -> (ok: bool) {
 	switch config.renderer_backend {
 	case "SDL3":
 		_ = sdl3.init_window(
@@ -83,6 +82,7 @@ init_engine :: proc(config: Game_Config) -> (ok: bool) {
 			config.window_y,
 			config.window_width,
 			config.window_height,
+			debug,
 		)
 
 	case "Software":

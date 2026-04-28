@@ -36,26 +36,13 @@ $configJson = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
 $gameName = [string]$configJson.game_name
 $safeGameName = Get-SafeFileName -Name $gameName
 
-
-# Clear the build directory before building
-if (Test-Path -Path $OutputDir) {
-    Remove-Item -Path $OutputDir -Recurse -Force
-}
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 $outPath = Join-Path -Path $OutputDir -ChildPath ($safeGameName + ".exe")
 
-Write-Host "Game name from config: $gameName"
-Write-Host "Output executable: $outPath"
-
-$odinArgs = @(
-    "build",
-    $AppDir,
-    "-out:$outPath"
-)
-
-& $OdinExe @odinArgs
+ # Build with ODIN_DEBUG defined
+& $OdinExe build $AppDir -out:$outPath -define:ODIN_DEBUG=1
 if ($LASTEXITCODE -ne 0) {
-    throw "Odin build failed with exit code $LASTEXITCODE"
+    throw "Build failed with exit code $LASTEXITCODE"
 }
 
-Write-Host "Build complete: $outPath"
+Write-Host "Build succeeded: $outPath"

@@ -49,7 +49,7 @@ import "core:log"
 import "core:c"
 import "core:strings"
 // Vendor
-import vk "vendor:vulkan"
+// import vk "vendor:vulkan"
 import glfw "vendor:glfw"
 
 glfw_error_callback :: proc "c" (error: i32, description: cstring) {
@@ -60,10 +60,10 @@ glfw_error_callback :: proc "c" (error: i32, description: cstring) {
 
 self := Engine {}
 
-init_window :: proc(window_name: string, x: i32, y: i32, width: i32, height: i32) -> glfw.WindowHandle {
+init_window :: proc(window_name: string, x: i32, y: i32, width: i32, height: i32, debug: bool) {
     // We initialize GLFW and create a window with it.
     ensure(bool(glfw.Init()), "Failed to initialize GLFW")
-
+    
     glfw.SetErrorCallback(glfw_error_callback)
 
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
@@ -71,7 +71,7 @@ init_window :: proc(window_name: string, x: i32, y: i32, width: i32, height: i32
     window_name_c, _ := strings.clone_to_cstring(window_name, context.temp_allocator)
     if window_name_c == nil {
         glfw.Terminate()
-        return nil
+        return 
     }
 
     glfw.WindowHint(glfw.CLIENT_API, glfw.NO_API)  // Correct for Vulkan
@@ -79,23 +79,23 @@ init_window :: proc(window_name: string, x: i32, y: i32, width: i32, height: i32
 
     pos_x := c.int(x)
     pos_y := c.int(y)
+    self.Debug = debug
     self.window = glfw.CreateWindow(width, height, window_name_c, nil, nil)
     if self.window == nil {
         log.error("Failed to create a Window")
         glfw.Terminate()
-        return nil
+        return     
     }
     glfw.SetWindowPos(self.window, pos_x, pos_y)
 
     if !engine_init(&self) {
         log.error("Failed to initialize Vulkan engine")
         shutdown_window()
-        return nil
+        return 
     }
-
-    return self.window
+    return
 }
-
+  
 
 shutdown_window :: proc() {
     if self.window != nil {

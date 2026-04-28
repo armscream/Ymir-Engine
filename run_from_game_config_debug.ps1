@@ -44,18 +44,26 @@ if (Test-Path -Path $OutputDir) {
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 $outPath = Join-Path -Path $OutputDir -ChildPath ($safeGameName + ".exe")
 
-Write-Host "Game name from config: $gameName"
-Write-Host "Output executable: $outPath"
-
-$odinArgs = @(
-    "build",
-    $AppDir,
-    "-out:$outPath"
-)
-
-& $OdinExe @odinArgs
+# Build with ODIN_DEBUG defined
+& $OdinExe build $AppDir -out:$outPath -define:ODIN_DEBUG=1
 if ($LASTEXITCODE -ne 0) {
-    throw "Odin build failed with exit code $LASTEXITCODE"
+    throw "Build failed with exit code $LASTEXITCODE"
 }
 
-Write-Host "Build complete: $outPath"
+Write-Host "Build succeeded: $outPath"
+
+
+# Copy the entire Config directory to the output directory
+$configSourceDir = Join-Path -Path $AppDir -ChildPath "Config"
+$configDestDir = Join-Path -Path $OutputDir -ChildPath "Config"
+Copy-Item -Path $configSourceDir -Destination $configDestDir -Recurse -Force
+
+# Copy the entire Levels directory to the output directory
+$levelsSourceDir = Join-Path -Path $AppDir -ChildPath "Levels"
+$levelsDestDir = Join-Path -Path $OutputDir -ChildPath "Levels"
+Copy-Item -Path $levelsSourceDir -Destination $levelsDestDir -Recurse -Force
+
+# Run the built executable from the Build directory
+Push-Location $OutputDir
+& (Join-Path . (Split-Path $outPath -Leaf))
+Pop-Location
