@@ -258,7 +258,7 @@ shutdown_runtime :: proc(runtime: ^Runtime_State) {
 	case "SDL3":
         sdl3.shutdown_window()
 	case "Vulkan":
-		vk.shutdown_window()
+		// engine cleanup is done in the backend for vulkan
 	case "Software":
 		soft.shutdown_window()
 	case "undefined":

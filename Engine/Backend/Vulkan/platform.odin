@@ -49,7 +49,7 @@ import "core:log"
 import "core:c"
 import "core:strings"
 // Vendor
-// import vk "vendor:vulkan"
+import vk "vendor:vulkan"
 import glfw "vendor:glfw"
 
 glfw_error_callback :: proc "c" (error: i32, description: cstring) {
@@ -80,6 +80,7 @@ init_window :: proc(window_name: string, x: i32, y: i32, width: i32, height: i32
     pos_x := c.int(x)
     pos_y := c.int(y)
     self.Debug = debug
+    self.window_extent = vk.Extent2D{u32(width), u32(height)}
     self.window = glfw.CreateWindow(width, height, window_name_c, nil, nil)
     if self.window == nil {
         log.error("Failed to create a Window")
@@ -90,20 +91,12 @@ init_window :: proc(window_name: string, x: i32, y: i32, width: i32, height: i32
 
     if !engine_init(&self) {
         log.error("Failed to initialize Vulkan engine")
-        shutdown_window()
+        destroy_window(self.window)
         return 
     }
     return
 }
-  
 
-shutdown_window :: proc() {
-    if self.window != nil {
-        glfw.DestroyWindow(self.window)
-        self.window = nil
-    }
-    glfw.Terminate()
-}
 
 @(private) is_escape_binding :: proc(escape_key: i32) -> bool {
     category := (escape_key >> 16) & 0xFFFF
@@ -136,7 +129,6 @@ get_window_state :: proc(x: ^i32, y: ^i32, width: ^i32, height: ^i32, fullscreen
     fullscreen^ = glfw.GetWindowMonitor(self.window) != nil
     return true
 }
-
 
 // -----------------------------------------------------------------------------
 // Callbacks
