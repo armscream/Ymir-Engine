@@ -9,7 +9,7 @@ startup_mode := ye.Engine_Startup.game
 game_config_path := "Config/game.json"
 
 run_game := bool(true)
-ODIN_DEBUG :: true
+ODIN_DEBUG :: #config(ODIN_DEBUG, false);
 
 main :: proc() {
 	// Initialize the Ymir Engine //

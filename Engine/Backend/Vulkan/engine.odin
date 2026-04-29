@@ -11,7 +11,7 @@ import vk "vendor:vulkan"
 import "../../Libs/vkb"
 import glog "../../glogger"
 
-ODIN_DEBUG :: #config(ODIN_DEBUG, false);
+ODIN_DEBUG :: #config(ODIN_DEBUG, false)
 
 Engine :: struct {
 	// Platform
@@ -75,7 +75,6 @@ engine_cleanup :: proc(self: ^Engine) {
 
 	// Make sure the gpu has stopped doing its things
 	ensure(vk.DeviceWaitIdle(self.vk_device) == .SUCCESS)
-	
 	engine_destroy_swapchain(self)
 
 	vk.DestroySurfaceKHR(self.vk_instance, self.vk_surface, nil)
@@ -86,6 +85,7 @@ engine_cleanup :: proc(self: ^Engine) {
 
 	vkb.destroy_physical_device(self.vkb.physical_device)
 	vkb.destroy_instance(self.vkb.instance)
+
 
 	destroy_window(self.window)
 }
@@ -98,8 +98,7 @@ engine_init_vulkan :: proc(self: ^Engine) -> (ok: bool) {
 	vkb.instance_set_app_name(&instance_builder, "Example Vulkan Application")
 	vkb.instance_require_api_version(&instance_builder, vk.API_VERSION_1_3)
 
-	when ODIN_DEBUG {    
-	//if self.Debug {  // needs to be When ODIN_DEBUG, with callback here, but its not working
+	when ODIN_DEBUG {
 		context = runtime.default_context()
 		ta := context.temp_allocator
 		runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
@@ -109,7 +108,6 @@ engine_init_vulkan :: proc(self: ^Engine) -> (ok: bool) {
 		instance_builder.use_debug_messenger = true
 
 		vkb.instance_request_validation_layers(&instance_builder)
-        
 		vkb.instance_set_debug_callback(&instance_builder, default_debug_callback)
 		fmt.println("[VK DEBUG] Debug callback set (no return value to check).")
 		vkb.instance_set_debug_callback_user_data_pointer(&instance_builder, self)
@@ -143,49 +141,54 @@ engine_init_vulkan :: proc(self: ^Engine) -> (ok: bool) {
 		vkb.destroy_instance(self.vkb.instance)
 	}
 
-	// === MANUAL DEBUG MESSENGER CREATION TEST ===
-	fmt.println("[VK DEBUG] Attempting manual vkCreateDebugUtilsMessengerEXT...")
-	vkCreateDebugUtilsMessengerEXT := vk.GetInstanceProcAddr(
-		self.vk_instance,
-		"vkCreateDebugUtilsMessengerEXT",
-	)
-	if vkCreateDebugUtilsMessengerEXT == nil {
-		fmt.println(
-			"[VK DEBUG] vkCreateDebugUtilsMessengerEXT function pointer is NULL! Debug messenger cannot be created.",
-		)
-	} else {
-		// Prepare a minimal VkDebugUtilsMessengerCreateInfoEXT
-		create_info := vk.DebugUtilsMessengerCreateInfoEXT{}
-		create_info.sType = vk.StructureType.DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT
-		create_info.messageSeverity = vk.DebugUtilsMessageSeverityFlagsEXT {
-			.VERBOSE,
-			.WARNING,
-			.ERROR,
-		}
-		create_info.messageType = vk.DebugUtilsMessageTypeFlagsEXT {
-			.GENERAL,
-			.VALIDATION,
-			.PERFORMANCE,
-		}
-		create_info.pfnUserCallback = default_debug_callback
-
-		create_info.pUserData = nil
-
-		result := vk.CreateDebugUtilsMessengerEXT(
+	when ODIN_DEBUG { 	// === MANUAL DEBUG MESSENGER CREATION TEST ===
+		fmt.println("[VK DEBUG] Attempting manual vkCreateDebugUtilsMessengerEXT...")
+		vkCreateDebugUtilsMessengerEXT := vk.GetInstanceProcAddr(
 			self.vk_instance,
-			&create_info,
-			nil,
-			&self.vk_debug_messenger,
+			"vkCreateDebugUtilsMessengerEXT",
 		)
-		if result != vk.Result.SUCCESS {
-			fmt.println("[VK DEBUG] vkCreateDebugUtilsMessengerEXT call failed! Result:", result)
-		} else {
+		if vkCreateDebugUtilsMessengerEXT == nil {
 			fmt.println(
-				"[VK DEBUG] vkCreateDebugUtilsMessengerEXT succeeded. Messenger:",
-				self.vk_debug_messenger,
+				"[VK DEBUG] vkCreateDebugUtilsMessengerEXT function pointer is NULL! Debug messenger cannot be created.",
 			)
-		}
-	} ///////////////////////////////////////////////////////////////////////////////
+		} else {
+			// Prepare a minimal VkDebugUtilsMessengerCreateInfoEXT
+			create_info := vk.DebugUtilsMessengerCreateInfoEXT{}
+			create_info.sType = vk.StructureType.DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT
+			create_info.messageSeverity = vk.DebugUtilsMessageSeverityFlagsEXT {
+				.VERBOSE,
+				.WARNING,
+				.ERROR,
+				//.INFO,
+			}
+			create_info.messageType = vk.DebugUtilsMessageTypeFlagsEXT {
+				.GENERAL,
+				.VALIDATION,
+				.PERFORMANCE,
+			}
+			create_info.pfnUserCallback = default_debug_callback
+			create_info.pUserData = nil
+
+			result := vk.CreateDebugUtilsMessengerEXT(
+				self.vk_instance,
+				&create_info,
+				nil,
+				&self.vk_debug_messenger,
+			)
+			if result != vk.Result.SUCCESS {
+				fmt.println(
+					"[VK DEBUG] vkCreateDebugUtilsMessengerEXT call failed! Result:",
+					result,
+				)
+			} else {
+				fmt.println(
+					"[VK DEBUG] vkCreateDebugUtilsMessengerEXT succeeded. Messenger:",
+					self.vk_debug_messenger,
+				)
+			}
+		} ///////////////////////////////////////////////////////////////////////////////
+	}
+
 
 	// Surface
 	vk_check(
@@ -245,27 +248,27 @@ engine_init_vulkan :: proc(self: ^Engine) -> (ok: bool) {
 // File-scope Vulkan debug callback for validation diagnostics
 // Should be under a When ODIN_DEBUG, but it's not working for some reason, so it's always included for now
 default_debug_callback :: proc "system" (
-    message_severity: vk.DebugUtilsMessageSeverityFlagsEXT,
-    message_types: vk.DebugUtilsMessageTypeFlagsEXT,
-    p_callback_data: ^vk.DebugUtilsMessengerCallbackDataEXT,
-    p_user_data: rawptr,
+	message_severity: vk.DebugUtilsMessageSeverityFlagsEXT,
+	message_types: vk.DebugUtilsMessageTypeFlagsEXT,
+	p_callback_data: ^vk.DebugUtilsMessengerCallbackDataEXT,
+	p_user_data: rawptr,
 ) -> b32 {
-    context = runtime.default_context()
-    context.logger = glog.g_logger
-    fmt.println("[VK DEBUG] === DEBUG CALLBACK TRIGGERED ===")
+	context = runtime.default_context()
+	context.logger = glog.g_logger
+	fmt.println("[VK DEBUG] === DEBUG CALLBACK TRIGGERED ===")
 
-    if .WARNING in message_severity do fmt.println("[VK DEBUG] Validation layer warning:")
+	if .WARNING in message_severity do fmt.println("[VK DEBUG] Validation layer warning:")
 
-    if .WARNING in message_severity {
-        log.warnf("[%v]: %s", message_types, p_callback_data.pMessage)
-    } else if .ERROR in message_severity {
-        log.errorf("[%v]: %s", message_types, p_callback_data.pMessage)
-        runtime.debug_trap()
-    } else {
-        log.infof("[%v]: %s", message_types, p_callback_data.pMessage)
-    }
-    return false // Applications must return false here
-} 
+	if .WARNING in message_severity {
+		log.warnf("[%v]: %s", message_types, p_callback_data.pMessage)
+	} else if .ERROR in message_severity {
+		log.errorf("[%v]: %s", message_types, p_callback_data.pMessage)
+		runtime.debug_trap()
+	} else {
+		log.infof("[%v]: %s", message_types, p_callback_data.pMessage)
+	}
+	return false // Applications must return false here
+}
 
 
 engine_create_swapchain :: proc(self: ^Engine, extent: vk.Extent2D) -> (ok: bool) {
