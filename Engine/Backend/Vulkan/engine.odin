@@ -112,6 +112,19 @@ engine_init_vulkan :: proc(self: ^Engine) -> (ok: bool) {
 		fmt.println("[VK DEBUG] Debug callback set (no return value to check).")
 		vkb.instance_set_debug_callback_user_data_pointer(&instance_builder, self)
 
+		// Ensure all severities are enabled
+		instance_builder.debug_message_severity = vk.DebugUtilsMessageSeverityFlagsEXT {
+			.VERBOSE,
+			//.INFO,
+			.WARNING,
+			.ERROR,
+		}
+		instance_builder.debug_message_type = vk.DebugUtilsMessageTypeFlagsEXT {
+			.GENERAL,
+			.VALIDATION,
+			.PERFORMANCE,
+		}
+
 		VK_LAYER_LUNARG_MONITOR :: "VK_LAYER_LUNARG_monitor"
 		VK_LAYER_KHRONOS_validation :: "VK_LAYER_KHRONOS_validation"
 
@@ -140,56 +153,7 @@ engine_init_vulkan :: proc(self: ^Engine) -> (ok: bool) {
 	defer if !ok {
 		vkb.destroy_instance(self.vkb.instance)
 	}
-
-	when ODIN_DEBUG { 	// === MANUAL DEBUG MESSENGER CREATION TEST ===
-		fmt.println("[VK DEBUG] Attempting manual vkCreateDebugUtilsMessengerEXT...")
-		vkCreateDebugUtilsMessengerEXT := vk.GetInstanceProcAddr(
-			self.vk_instance,
-			"vkCreateDebugUtilsMessengerEXT",
-		)
-		if vkCreateDebugUtilsMessengerEXT == nil {
-			fmt.println(
-				"[VK DEBUG] vkCreateDebugUtilsMessengerEXT function pointer is NULL! Debug messenger cannot be created.",
-			)
-		} else {
-			// Prepare a minimal VkDebugUtilsMessengerCreateInfoEXT
-			create_info := vk.DebugUtilsMessengerCreateInfoEXT{}
-			create_info.sType = vk.StructureType.DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT
-			create_info.messageSeverity = vk.DebugUtilsMessageSeverityFlagsEXT {
-				.VERBOSE,
-				.WARNING,
-				.ERROR,
-				//.INFO,
-			}
-			create_info.messageType = vk.DebugUtilsMessageTypeFlagsEXT {
-				.GENERAL,
-				.VALIDATION,
-				.PERFORMANCE,
-			}
-			create_info.pfnUserCallback = default_debug_callback
-			create_info.pUserData = nil
-
-			result := vk.CreateDebugUtilsMessengerEXT(
-				self.vk_instance,
-				&create_info,
-				nil,
-				&self.vk_debug_messenger,
-			)
-			if result != vk.Result.SUCCESS {
-				fmt.println(
-					"[VK DEBUG] vkCreateDebugUtilsMessengerEXT call failed! Result:",
-					result,
-				)
-			} else {
-				fmt.println(
-					"[VK DEBUG] vkCreateDebugUtilsMessengerEXT succeeded. Messenger:",
-					self.vk_debug_messenger,
-				)
-			}
-		} ///////////////////////////////////////////////////////////////////////////////
-	}
-
-
+	
 	// Surface
 	vk_check(
 		glfw.CreateWindowSurface(self.vk_instance, self.window, nil, &self.vk_surface),
