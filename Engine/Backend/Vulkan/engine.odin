@@ -107,6 +107,32 @@ engine_init_vulkan :: proc(self: ^Engine) -> (ok: bool) {
 		vkb.instance_enable_extension(&instance_builder, vk.EXT_DEBUG_UTILS_EXTENSION_NAME)
 		instance_builder.use_debug_messenger = true
 
+		// File-scope Vulkan debug callback for validation diagnostics
+		// Should be under a When ODIN_DEBUG, but it's not working for some reason, so it's always included for now
+		default_debug_callback :: proc "system" (
+			message_severity: vk.DebugUtilsMessageSeverityFlagsEXT,
+			message_types: vk.DebugUtilsMessageTypeFlagsEXT,
+			p_callback_data: ^vk.DebugUtilsMessengerCallbackDataEXT,
+			p_user_data: rawptr,
+		) -> b32 {
+			context = runtime.default_context()
+			context.logger = glog.g_logger
+			fmt.println("[VK DEBUG] === DEBUG CALLBACK TRIGGERED ===")
+
+			if .WARNING in message_severity do fmt.println("[VK DEBUG] Validation layer warning:")
+
+			if .WARNING in message_severity {
+				log.warnf("[%v]: %s", message_types, p_callback_data.pMessage)
+			} else if .ERROR in message_severity {
+				log.errorf("[%v]: %s", message_types, p_callback_data.pMessage)
+				runtime.debug_trap()
+			} else {
+				log.infof("[%v]: %s", message_types, p_callback_data.pMessage)
+			}
+			return false // Applications must return false here
+		}
+
+
 		vkb.instance_request_validation_layers(&instance_builder)
 		vkb.instance_set_debug_callback(&instance_builder, default_debug_callback)
 		fmt.println("[VK DEBUG] Debug callback set (no return value to check).")
@@ -153,7 +179,7 @@ engine_init_vulkan :: proc(self: ^Engine) -> (ok: bool) {
 	defer if !ok {
 		vkb.destroy_instance(self.vkb.instance)
 	}
-	
+
 	// Surface
 	vk_check(
 		glfw.CreateWindowSurface(self.vk_instance, self.window, nil, &self.vk_surface),
@@ -208,9 +234,7 @@ engine_init_vulkan :: proc(self: ^Engine) -> (ok: bool) {
 	return true
 }
 
-
-// File-scope Vulkan debug callback for validation diagnostics
-// Should be under a When ODIN_DEBUG, but it's not working for some reason, so it's always included for now
+/* Move to file-scope when the callback isnt working otherwise...
 default_debug_callback :: proc "system" (
 	message_severity: vk.DebugUtilsMessageSeverityFlagsEXT,
 	message_types: vk.DebugUtilsMessageTypeFlagsEXT,
@@ -233,6 +257,7 @@ default_debug_callback :: proc "system" (
 	}
 	return false // Applications must return false here
 }
+*/
 
 
 engine_create_swapchain :: proc(self: ^Engine, extent: vk.Extent2D) -> (ok: bool) {
