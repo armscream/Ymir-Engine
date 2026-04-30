@@ -1,15 +1,25 @@
 package game
 
-import "core:fmt"
 import ye "../Engine"
-import yemath "../Engine/math"
+import "base:runtime"
+import "core:fmt"
 import "core:math/linalg"
 
+import "vendor:glfw"
 
-a: yemath.vec3 = {0, 0, 1}
-b: yemath.vec3 = {0, 1, 0}
 
+a: ye.Vec3 = {0, 0, 1}
+b: ye.Vec3 = {0, 1, 0}
+
+test :: proc() {
+	// doing stuff
+	fmt.println("doing stuff")
+}
 
 run :: proc() {
-   
+
+
+	test()
 }
+
+// deprecated for now

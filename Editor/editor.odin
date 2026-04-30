@@ -1,342 +1,325 @@
 package editor
 
+import ye "../Engine"
+import imgui "../vendor/odin-imgui"
+import imgui_sdl3 "../vendor/odin-imgui/imgui_impl_sdl3"
+import imgui_sdlrenderer3 "../vendor/odin-imgui/imgui_impl_sdlrenderer3"
+import "core:c"
 import "core:encoding/json"
 import "core:fmt"
 import "core:mem"
 import "core:os"
 import "core:strings"
-import ye "../Engine"
-import "vendor:glfw"
-import "vendor:imgui"
+import "vendor:sdl3"
+import sdl_image "vendor:sdl3/image"
 
-RUNANIMATIONGRAPHEDITOR: bool = false
-RUNMATERIALGRAPHEDITOR: bool = false
-RUNLEVELEDITOR: bool = false
 
-window: glfw.WindowHandle
-
-Window_Settings :: struct {
-	window_x:      i32,
-	window_y:      i32,
-	window_width:  i32,
-	window_height: i32,
-	fullscreen:    bool,
+// Asset browser state
+asset_browser_state := Asset_Browser_State {
+	directory_tree   = {},
+	selected_indices = {},
+	active_tab       = 0,
+	terminal_log     = "",
 }
 
-Editor_Settings :: struct {
-	window:       Window_Settings,
-	animgraph:    Window_Settings,
-	materialgraph: Window_Settings,
-	level:        Window_Settings,
+// Directory browser state
+directory_browser_state := Directory_Browser_State {
+	root_path        = "App/Assets",
+	current_path     = "App/Assets",
+	entries          = {},
+	selected_index   = -1,
+	filter_text      = {},
+	show_hidden      = false,
+	new_file_name    = {},
+	rename_file_name = {},
+	error_message    = {},
 }
 
-Editor_Config_File :: struct {
-	editor_name: string,
-	settings:    Editor_Settings,
+state := Editor_State {
+    running      = true,
+    level_editor = Level_Editor_State{},
 }
 
-
-main :: proc() {
-	    // Memory tracking
-    track: mem.Tracking_Allocator
-    mem.tracking_allocator_init(&track, context.allocator)
-    context.allocator = mem.tracking_allocator(&track)
-
-    defer {
-        for _, entry in track.allocation_map {
-            fmt.eprintf("%v leaked %v bytes\n", entry.location, entry.size)
-        }
-        for entry in track.bad_free_array {
-            fmt.eprintf("%v bad free\n", entry.location)
-        }
-        mem.tracking_allocator_destroy(&track)
-    }
-    // End memory tracking
-
-
-	startup_mode := ye.Engine_Startup.editor
-	_ = startup_mode
-	run_game := false
-
-	config_path := resolve_editor_config_path()
-
-	cfg, ok := load_editor_config(config_path)
-	if !ok {
-		return
+// Load config from file
+load_editor_config :: proc(path: string) -> Editor_Config {
+	data, err := os.read_entire_file_from_path(path, context.temp_allocator)
+	if err != nil || data == nil {
+		return Editor_Config{backend = "SDLRenderer3", theme = "Dark", layout = "default"}
 	}
-	defer free_editor_config(&cfg)
+	config := Editor_Config{}
+	json.unmarshal(data, &config)
+	return config
+}
 
-	if !create_window(cfg.editor_name, cfg.settings.window) {
-		return
-	}
-
-    // Create game instance if running game from editor, otherwise just run editor windows.
-	if run_game {
-	    rungame()
-	}
-    
-
-	for glfw.WindowShouldClose(window) == glfw.FALSE {
-		if RUNANIMATIONGRAPHEDITOR {
-			run_animationgraph_editor()
+// Initialize ImGui and backend
+init_imgui :: proc(state: ^Editor_State) -> bool {
+	state.imgui_ctx = imgui.create_context()
+	imgui.set_current_context(state.imgui_ctx)
+	if state.config.backend == "SDLRenderer3" {
+		if !imgui_sdlrenderer3.init(state.renderer) {
+			fmt.eprintln("Failed to init ImGui SDLRenderer3 backend")
+			return false
 		}
-		if RUNMATERIALGRAPHEDITOR {
-			run_materialgraph_editor()
-		}
-		if RUNLEVELEDITOR {
-			run_level_editor()
-		}
-
-		glfw.PollEvents()
-	}
-
-	capture_main_window_settings(&cfg.settings.window)
-	_ = save_editor_config(config_path, cfg)
-	destroy_window()
-}
-
-@(private) default_window_settings :: proc(fullscreen: bool) -> Window_Settings {
-	return Window_Settings{
-		window_x = -1,
-		window_y = -1,
-		window_width = 1280,
-		window_height = 720,
-		fullscreen = fullscreen,
-	}
-}
-
-@(private) default_editor_settings :: proc() -> Editor_Settings {
-	return Editor_Settings{
-		window = default_window_settings(true),
-		animgraph = default_window_settings(false),
-		materialgraph = default_window_settings(false),
-		level = default_window_settings(false),
-	}
-}
-
-@(private) default_editor_config :: proc() -> Editor_Config_File {
-	return Editor_Config_File{
-		editor_name = "Ymir Editor",
-		settings = default_editor_settings(),
-	}
-}
-
-@(private) ensure_editor_name :: proc(cfg: ^Editor_Config_File) -> bool {
-	if cfg.editor_name != "" {
-		return true
-	}
-
-	name, err := strings.clone("Ymir Editor", context.allocator)
-	if err != nil {
-		fmt.eprintln("Failed to allocate default editor name")
-		return false
-	}
-	cfg.editor_name = name
-	return true
-}
-
-@(private) free_editor_config :: proc(cfg: ^Editor_Config_File) {
-	if cfg.editor_name != "" {
-		delete(cfg.editor_name)
-		cfg.editor_name = ""
-	}
-}
-
-@(private) normalize_window_settings :: proc(w: ^Window_Settings, fullscreen_default: bool) {
-	if w.window_width <= 0 {
-		w.window_width = 1280
-	}
-	if w.window_height <= 0 {
-		w.window_height = 720
-	}
-	if w.window_x == 0 && w.window_y == 0 && w.window_width == 1280 && w.window_height == 720 && !w.fullscreen && fullscreen_default {
-		// Likely zero-value from missing JSON section; first run should default fullscreen.
-		w.fullscreen = true
-		w.window_x = -1
-		w.window_y = -1
-	}
-}
-
-@(private) normalize_editor_settings :: proc(s: ^Editor_Settings) {
-	normalize_window_settings(&s.window, true)
-	normalize_window_settings(&s.animgraph, false)
-	normalize_window_settings(&s.materialgraph, false)
-	normalize_window_settings(&s.level, false)
-}
-
-@(private) resolve_editor_config_path :: proc() -> string {
-	if os.exists("Editor") {
-		return "Editor/editor.json"
-	}
-	return "editor.json"
-}
-
-@(private) load_editor_config :: proc(path: string) -> (cfg: Editor_Config_File, ok: bool) {
-	cfg = default_editor_config()
-
-	if !os.exists(path) {
-		if !ensure_editor_name(&cfg) {
-			return Editor_Config_File{}, false
-		}
-		_ = save_editor_config(path, cfg)
-		return cfg, true
-	}
-
-	raw, read_err := os.read_entire_file(path, context.allocator)
-	if read_err != nil {
-		fmt.eprintln("Failed to read editor config:", read_err)
-		return Editor_Config_File{}, false
-	}
-	defer delete(raw)
-
-	if unmarshal_err := json.unmarshal(raw, &cfg); unmarshal_err != nil {
-		fmt.eprintln("Failed to parse editor config:", unmarshal_err)
-		free_editor_config(&cfg)
-		return Editor_Config_File{}, false
-	}
-
-	if !ensure_editor_name(&cfg) {
-		free_editor_config(&cfg)
-		return Editor_Config_File{}, false
-	}
-	normalize_editor_settings(&cfg.settings)
-	return cfg, true
-}
-
-@(private) save_editor_config :: proc(path: string, cfg: Editor_Config_File) -> bool {
-	out, err := json.marshal(cfg, allocator = context.temp_allocator)
-	if err != nil {
-		fmt.eprintln("Failed to serialize editor config:", err)
-		return false
-	}
-
-	write_err := os.write_entire_file(
-		path,
-		out,
-		os.Permissions_Read_All + {.Write_User},
-		true,
-	)
-	if write_err != nil {
-		fmt.eprintln("Failed to write editor config:", write_err)
+	} else {
+		fmt.eprintln("Unknown backend: ", state.config.backend)
 		return false
 	}
 	return true
 }
 
-@(private) create_window :: proc(game_name: string, settings: Window_Settings) -> bool {
-	if !glfw.Init() {
-		fmt.eprintln("Failed to initialize GLFW")
-		return false
+// Helper procs for cstring conversion and length
+
+cstring_to_string :: proc(buf: ^[256]u8) -> string {
+	n := 0
+	for buf^[n] != 0 && n < 256 {
+		n += 1
 	}
+	return string(buf^[0:n])
+}
 
-	title, alloc_err := strings.clone_to_cstring(game_name)
-	if alloc_err != nil {
-		fmt.eprintln("Failed to allocate GLFW window title")
-		glfw.Terminate()
-		return false
+
+cstring_len :: proc(buf: ^[256]u8) -> int {
+	n := 0
+	for buf^[n] != 0 && n < 256 {
+		n += 1
 	}
-	defer delete(title)
+	return n
+}
 
-	glfw.DefaultWindowHints()
 
-	width := settings.window_width
-	height := settings.window_height
+string_to_cstring :: proc(src: string, dst: ^[256]u8, max: int) {
+	n := min(len(src), max - 1)
+	for i in 0 ..< n {
+		dst^[i] = src[i]
+	}
+	dst^[n] = 0
+}
 
-	monitor: glfw.MonitorHandle = nil
-	if settings.fullscreen {
-		monitor = glfw.GetPrimaryMonitor()
-		if monitor != nil {
-			mode := glfw.GetVideoMode(monitor)
-			if mode != nil {
-				width = i32(mode.width)
-				height = i32(mode.height)
+// Panel stubs
+show_asset_browser_panel :: proc(state: ^Asset_Browser_State, dir_state: ^Directory_Browser_State) {
+	imgui.begin("Asset Browser")
+	// Tabs: Assets | Terminal
+	if imgui.begin_tab_bar("asset_browser_tabs") {
+		if imgui.begin_tab_item("Assets") {
+			// Filter/search bar
+			imgui.input_text("Filter", (cast(cstring)&dir_state.filter_text[0]), 256)
+			imgui.same_line()
+			if imgui.button("Clear") {
+				state.filter_text = {}
+			}
+			imgui.separator()
+			// Directory tree
+			filter := cstring_to_string(&state.filter_text)
+			for i in 0 ..< len(state.directory_tree) {
+				entry := state.directory_tree[i]
+				show := filter == "" || strings.contains(entry.path, filter)
+				if !show {continue}
+				icon := entry.icon
+				if icon == "" {
+					icon = entry.is_directory ? "[DIR]" : "[FILE]"
+				}
+				imgui.text("%s %s", icon, entry.path)
+				if imgui.is_item_clicked() {
+					state.selected_indices = {}
+					append(&state.selected_indices, i)
+				}
+			}
+			imgui.end_tab_item()
+		}
+		if imgui.begin_tab_item("Terminal") {
+			terminal_log_buf: [256]u8
+			string_to_cstring(state.terminal_log, &terminal_log_buf, 256)
+			imgui.text_wrapped(cast(cstring)&terminal_log_buf[0]);  
+			imgui.end_tab_item()
+		}
+		imgui.end_tab_bar()
+	}
+	imgui.end()
+}
+
+show_directory_browser_panel :: proc(state: ^Directory_Browser_State) {
+	imgui.begin("Directory Browser")
+	// Filter/search bar
+	imgui.input_text("Filter", (cast(cstring)&state.filter_text[0]), 256)
+	imgui.same_line()
+	if imgui.button("Clear") {
+		state.filter_text = {}
+	}
+	imgui.same_line()
+	if imgui.button("Refresh") {
+		refresh_directory_entries(state)
+	}
+	imgui.separator()
+	// Directory entries
+	filter := cstring_to_string(&state.filter_text)
+	for i in 0 ..< len(state.entries) {
+		entry := state.entries[i]
+		show := filter == "" || strings.contains(entry.path, filter)
+		if !show {continue}
+		icon := entry.icon
+		if icon == "" {
+			icon = entry.is_directory ? "[DIR]" : "[FILE]"
+		}
+		imgui.text("%s %s", icon, entry.path)
+		if imgui.is_item_clicked() {
+			state.selected_index = i
+		}
+	}
+	// File operations (create, rename, delete)
+	if imgui.button("New File") {
+		imgui.open_popup("Create File")
+	}
+	if imgui.begin_popup_modal("Create File") {
+		imgui.input_text("File Name", (cast(cstring)&state.new_file_name[0]), 256)
+		if imgui.button("Create") && cstring_len(&state.new_file_name) > 0 {
+			name := cstring_to_string(&state.new_file_name)
+			path := os.join_path({state.current_path, name}, context.temp_allocator)
+			file, err := os.create(path)
+			if err == nil {
+				refresh_directory_entries(state)
+				state.new_file_name = {}
+				imgui.close_current_popup()
+			} else {
+				string_to_cstring("Failed to create file", &state.error_message, 256)
 			}
 		}
-	}
-
-	window = glfw.CreateWindow(width, height, title, monitor, nil)
-	if window == nil {
-		fmt.eprintln("Failed to create GLFW window")
-		glfw.Terminate()
-		return false
-	}
-
-	if monitor == nil {
-		if settings.window_x >= 0 && settings.window_y >= 0 {
-			glfw.SetWindowPos(window, settings.window_x, settings.window_y)
+		imgui.same_line()
+		if imgui.button("Cancel") {
+			state.new_file_name = {}
+			imgui.close_current_popup()
 		}
+		if cstring_len(&state.error_message) > 0 {
+			imgui.text_colored({1, 0, 0, 1}, (cast(cstring)&state.error_message[0]))
+		}
+		imgui.end_popup()
 	}
-
-	glfw.ShowWindow(window)
-	return true
+	if imgui.button("Rename") && state.selected_index >= 0 {
+		entry := state.entries[state.selected_index]
+		entry_name := entry.path
+		string_to_cstring(entry_name, &state.rename_file_name, 256)
+		imgui.open_popup("Rename File")
+	}
+	if imgui.begin_popup_modal("Rename File") {
+		imgui.input_text("New Name", (cast(cstring)&state.rename_file_name[0]), 256)
+		if imgui.button("Rename") && cstring_len(&state.rename_file_name) > 0 {
+			old_path := state.entries[state.selected_index].path
+			new_name := cstring_to_string(&state.rename_file_name)
+			path := os.join_path({state.current_path, new_name}, context.temp_allocator)
+			err := os.rename(old_path, path)
+			if err == nil {
+				refresh_directory_entries(state)
+				state.rename_file_name = {}
+				imgui.close_current_popup()
+			} else {
+				string_to_cstring("Failed to rename file", &state.error_message, 256)
+			}
+		}
+		imgui.same_line()
+		if imgui.button("Cancel") {
+			state.rename_file_name = {}
+			imgui.close_current_popup()
+		}
+		if cstring_len(&state.error_message) > 0 {
+			imgui.text_colored({1, 0, 0, 1}, (cast(cstring)&state.error_message[0]))
+		}
+		imgui.end_popup()
+	}
+	if imgui.button("Delete") && state.selected_index >= 0 {
+		imgui.open_popup("Delete File")
+	}
+	if imgui.begin_popup_modal("Delete File") {
+		if imgui.button("Confirm Delete") {
+			path := state.entries[state.selected_index].path
+			err := os.remove(path)
+			if err == nil {
+				refresh_directory_entries(state)
+				imgui.close_current_popup()
+			} else {
+				string_to_cstring("Failed to delete file", &state.error_message, 256)
+			}
+		}
+		imgui.same_line()
+		if imgui.button("Cancel") {
+			imgui.close_current_popup()
+		}
+		if cstring_len(&state.error_message) > 0 {
+			imgui.text_colored({1, 0, 0, 1}, (cast(cstring)&state.error_message[0]))
+		}
+		imgui.end_popup()
+	}
+	imgui.end()
 }
 
-@(private) capture_main_window_settings :: proc(dst: ^Window_Settings) {
-	if window == nil {
-		return
-	}
-
-	width, height := glfw.GetWindowSize(window)
-	dst.window_width = i32(width)
-	dst.window_height = i32(height)
-	dst.fullscreen = glfw.GetWindowMonitor(window) != nil
-
-	if !dst.fullscreen {
-		x, y := glfw.GetWindowPos(window)
-		dst.window_x = i32(x)
-		dst.window_y = i32(y)
-	}
-}
-
-@(private) destroy_window :: proc() {
-	if window != nil {
-		glfw.DestroyWindow(window)
-		window = nil
-	}
-	glfw.Terminate()
-}
-
-@(private) rungame :: proc() {
-    working_dir := "."
-
-    if !os.exists("run_from_game_config.ps1") {
-        if os.exists("../run_from_game_config.ps1") {
-            working_dir = ".."
-        } else {
-            fmt.eprintln("Could not find run_from_game_config.ps1 from current or parent directory")
-            return
-        }
-    }
-
-	desc := os.Process_Desc{
-		working_dir = working_dir,
-		stdin = os.stdin,
-		stdout = os.stdout,
-		stderr = os.stderr,
-		command = {
-			"powershell.exe",
-			"-NoProfile",
-			"-ExecutionPolicy",
-			"Bypass",
-			"-File",
-			"run_from_game_config.ps1",
-		},
-	}
-
-	process, err := os.process_start(desc)
+refresh_directory_entries :: proc(state: ^Directory_Browser_State) {
+	entries, err := os.read_all_directory_by_path(state.current_path, context.allocator)
 	if err != nil {
-		fmt.eprintln("Failed to start game build/run PowerShell:", err)
+		state.entries = nil
 		return
 	}
-
-	state, wait_err := os.process_wait(process)
-	if wait_err != nil {
-		fmt.eprintln("Failed while waiting for game build/run PowerShell:", wait_err)
-		return
+	defer os.file_info_slice_delete(entries, context.allocator)
+	new_entries := make([dynamic]Directory_Browser_Entry, 0)
+	for entry in entries {
+		is_dir := entry.type == .Directory
+		icon := is_dir ? "[DIR]" : "[FILE]"
+		// Optionally, assign icons based on file extension
+		if !is_dir {
+			lower, _ := strings.to_lower(entry.name, context.temp_allocator)
+			if strings.has_suffix(
+				lower,
+				".png",
+			) {icon = "[PNG]"} else if strings.has_suffix(lower, ".jpg") {icon = "[JPG]"} else if strings.has_suffix(lower, ".gltf") {icon = "[GLTF]"} else if strings.has_suffix(lower, ".csv") {icon = "[CSV]"}
+			// Add more as needed
+		}
+		append(
+			&new_entries,
+			Directory_Browser_Entry{path = entry.fullpath, is_directory = is_dir, icon = icon},
+		)
 	}
-	if !state.success || state.exit_code != 0 {
-		fmt.eprintln("Game build/run script exited with code:", state.exit_code)
-	}
+	state.entries = new_entries
 }
 
+// Main entry
+main :: proc() {
+	config := load_editor_config("editor.json")
+	window := sdl3.CreateWindow("Ymir Editor", 1280, 720, sdl3.WINDOW_RESIZABLE)
+	renderer := sdl3.CreateRenderer(window, nil)
+	run_level_editor := true
+	force_default_layout_next_frame := false
+	if !init_imgui(&state) {
+		fmt.eprintln("ImGui initialization failed")
+		return
+	}
+	defer {
+		imgui.destroy_context(state.imgui_ctx)
+		sdl3.DestroyRenderer(state.renderer)
+		sdl3.DestroyWindow(state.window)
+	}
+        for event: sdl3.Event; sdl3.PollEvent(&event); {
+            if event.type == sdl3.EventType.QUIT {
+                state.running = false
+            }
+            // Handle other events
+        }
+		imgui.new_frame()
+		// Modular panel rendering
+		show_asset_browser_panel(&asset_browser_state)
+		show_directory_browser_panel(&directory_browser_state)
+		// ...other panels...
+		imgui.render()
 
+		// SDL3 GPU backend frame logic
+		if state.config.backend == "SDL3" {
+			// TODO: Initialize and manage these objects at startup and per-frame:
+			//   gpu_device: ^sdl3.GPUDevice
+			//   command_buffer: ^sdl3.GPUCommandBuffer
+			//   render_pass: ^sdl3.GPURenderPass
+			//   pipeline: ^sdl3.GPUGraphicsPipeline (optional)
+			// Begin GPU frame (pseudo-code, replace with actual API calls):
+			// sdl3.BeginGPUFrame(gpu_device)
+			// sdl3.BeginRenderPass(command_buffer, render_pass)
+			// imgui_sdlrenderer3.render_draw_data(imgui.get_draw_data(), command_buffer, render_pass)
+			// sdl3.EndRenderPass(command_buffer, render_pass)
+			// sdl3.Present(gpu_device)
+		}
+		sdl3.Delay(16) // ~60 FPS
+	}

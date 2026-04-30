@@ -17,7 +17,7 @@ draw_frame :: proc(runtime: rawptr, screen_width: i32, screen_height: i32) {
         // Skip rendering while minimized
         return
     }
-    //          -----------------------------------------------
+    //          ----------------------------------------------- 
 
     // Clear the screen with a solid color and create a pixel. This is all i am doing with SDL as the rest is software
 	_ = sdl3.SetRenderDrawColor(renderer, 255, 64, 64, 255)

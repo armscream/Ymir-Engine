@@ -1,0 +1,38 @@
+# Build
+*.lib
+*.dll
+*.pdb
+*.a
+*.dylib
+*.exe
+*.so
+*.obj
+*.o
+*.exp
+*.ilk
+*.res
+*.manifest
+
+# Build directories, keep .gitkeep
+**/build/*
+!**/build/.gitkeep
+
+# IDE/Editor
+/.vscode
+*.sublime-workspace
+*.code-workspace
+/.idea
+*.swp
+*.swo
+
+# Logs and temp
+/tmp
+*.log
+
+# OS
+**/.DS_Store
+Thumbs.db
+desktop.ini
+
+# Project specific
+ols.json

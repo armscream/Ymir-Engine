@@ -1,0 +1,137 @@
+# Odin VMA
+
+Bindings for [Vulkan Memory Allocator][] **v3.2.1** in [Odin Programming Language][].
+
+## Basic Usage
+
+Copy the `vma` folder to your project or `shared` directory.
+
+```odin
+vma_vulkan_functions := vma.create_vulkan_functions()
+
+allocator_create_info: vma.Allocator_Create_Info = {
+    flags = {.Buffer_Device_Address},
+    instance = instance,
+    vulkan_api_version = 1003000, // 1.3
+    physical_device = physical_device,
+    device = device,
+    vulkan_functions = &vma_vulkan_functions,
+}
+
+allocator: vma.Allocator = ---
+if res := vma.create_allocator(allocator_create_info, &allocator); res != .SUCCESS {
+    log.errorf("Failed to Create Vulkan Memory Allocator: [%v]", res)
+    return
+}
+
+defer vma.destroy_allocator(allocator)
+```
+
+## Building VMA
+
+Precompiled binaries are not available, but you can easily compile the library using
+[Premake](https://premake.github.io/).
+
+### Prerequisites
+
+- [Premake5](https://premake.github.io) - the build configuration
+  - You can download the [Pre-Built Binaries](https://premake.github.io/download), simply need
+    to be unpacked and placed somewhere on the system search path or any other convenient
+    location.
+  - For Unix, also requires **GNU libc 2.38**.
+- [Git](http://git-scm.com/downloads) - required for clone dependencies
+
+### Windows
+
+1. Clone or [download](https://github.com/Capati/odin-vma/archive/refs/heads/main.zip) this
+   repository
+
+2. Download and install **premake5.exe**.
+
+    Either add to PATH or copy to project directory.
+
+3. Open a command window, navigate to the project directory and generate Visual Studio 2022
+   project files with desired `vk-version`.
+
+    `vk-version` specifies the Vulkan minor version. For example, 3 corresponds to `1003000`
+      (Vulkan 1.3).
+
+    ```shell
+    premake5 --vk-version=3 vs2022 # 1003000 (1.3)
+    ```
+
+4. From the project folder, open the directory `build\make\windows`, them open the generated
+   solution **vma.sln**.
+
+5. In Visual Studio, confirm that the dropdown box at the top says “x64” (not “x86”); and then
+   use **Build** > **Build Solution**.
+
+    The generated library file `vma_windows_x86_64.lib` will be located in the root of the
+    project directory.
+
+### Unix (macOS/Linux)
+
+1. Clone or [download](https://github.com/Capati/odin-vma/archive/refs/heads/main.zip) this
+   repository
+
+2. Download and install **premake5**
+
+3. Open a terminal window, navigate to the project directory and generate the makefiles with
+   desired `vk-version`:
+
+    `vk-version` specifies the Vulkan minor version. For example, 3 corresponds to `1003000`
+      (Vulkan 1.3).
+
+    ```bash
+    premake5 --vk-version=3 gmake2  # 1003000 (1.3)
+    # On macOS, you can also use Xcode:
+    premake5 --vk-version=3 xcode4
+    ```
+
+4. From the project folder, navigate to the generated build directory:
+
+    ```bash
+    cd build/make/linux
+    # Or
+    cd build/make/macosx
+    ```
+
+5. Compile the project using the `make` command:
+
+    ```bash
+    make config=release_x86_64
+    # Or for debug build:
+    # make config=debug_x86_64
+    ```
+
+    On macOS, the `make` command might need different configuration flags:
+
+    ```bash
+    make config=release_x86_64   # For Intel Macs
+    # or
+    make config=release_arm64    # For Apple Silicon (M1/M2/M3) Macs
+    ```
+
+    The generated library file will be located in the root of the project directory.
+
+## Naming Conventions
+
+Types and values follow the [Odin Naming Convention][]. In general, `Ada_Case` for types and
+`snake_case` for values
+
+|                    | Case                                |
+| ------------------ | ----------------------------------- |
+| Import Name        | snake_case (but prefer single word) |
+| Types              | Ada_Case                            |
+| Enum Values        | Ada_Case                            |
+| Procedures         | snake_case                          |
+| Local Variables    | snake_case                          |
+| Constant Variables | SCREAMING_SNAKE_CASE                |
+
+## License
+
+MIT License - See [LICENSE](./LICENSE) file for details.
+
+[Vulkan Memory Allocator]: https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator
+[Odin Programming Language]: https://odin-lang.org/
+[Odin Naming Convention]: https://github.com/odin-lang/Odin/wiki/Naming-Convention

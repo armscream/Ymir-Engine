@@ -36,6 +36,11 @@ $configJson = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
 $gameName = [string]$configJson.game_name
 $safeGameName = Get-SafeFileName -Name $gameName
 
+
+# Clear the build directory before building
+if (Test-Path -Path $OutputDir) {
+    Remove-Item -Path $OutputDir -Recurse -Force
+}
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 $outPath = Join-Path -Path $OutputDir -ChildPath ($safeGameName + ".exe")
 
