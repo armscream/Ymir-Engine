@@ -19,7 +19,6 @@ Engine :: struct {
 	window:                glfw.WindowHandle,
 	is_initialized:        bool,
 	stop_rendering:        bool,
-	Debug:                 bool,
 	// Vulkan
 	vk_instance:           vk.Instance,
 	vk_physical_device:    vk.PhysicalDevice,

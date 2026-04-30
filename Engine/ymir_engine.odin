@@ -1,7 +1,9 @@
 package ye
 
+import "vendor:glfw"
+import "vendor:sdl3"
 // Backends
-import sdl3 "./Backend/SDL3"
+import Bsdl3 "./Backend/SDL3"
 import soft "./Backend/Software"
 import vk "./Backend/Vulkan"
 import glog "./glogger"
@@ -54,6 +56,14 @@ free_level_data :: proc(level_data: ^Level_Data) {
 	delete(level_data.name)
 }
 
+
+// Tagged union for window handles
+Window_Handle :: struct #raw_union {
+	glfw: glfw.WindowHandle,
+	sdl3: sdl3.Window,
+	//soft: sdl3.Window, // Placeholder for software renderer window handle, if needed
+}
+
 // Runtime aggregate passed between boot and shutdown.
 // Keeps everything the main loop needs in one object.
 Runtime_State :: struct {
@@ -64,41 +74,45 @@ Runtime_State :: struct {
 	game_config_path: string,
 }
 
-init_engine :: proc(config: Game_Config, debug: bool) -> (ok: bool) {
+init_engine :: proc(config: Game_Config, debug: bool) -> (ok: bool, window: Window_Handle) {
+	glog.initialize()
 	switch config.renderer_backend {
 	case "SDL3":
-		_ = sdl3.init_window(
+		sdl3_win := Bsdl3.init_window(
 			config.game_name,
 			config.window_x,
 			config.window_y,
 			config.window_width,
 			config.window_height,
 		)
+		return true, Window_Handle{sdl3 = sdl3_win^}
 
 	case "Vulkan":
-		vk.init_window(
+		glfw_win := vk.init_window(
 			config.game_name,
 			config.window_x,
 			config.window_y,
 			config.window_width,
 			config.window_height,
-			debug,
 		)
+		return true, Window_Handle{glfw = glfw_win}
 
 	case "Software":
-		_ = soft.init_window(
+		soft_win := soft.init_window(
 			config.game_name,
 			config.window_x,
 			config.window_y,
 			config.window_width,
 			config.window_height,
 		)
+		return true, Window_Handle{}
 
 	case "undefined":
 		fmt.println("Unknown renderer backend: ", config.renderer_backend)
+		return false, Window_Handle{}
 	}
-    glog.initialize()
-    return true
+	// fallback
+	return false, Window_Handle{}
 }
 
 should_quit :: proc(runtime: ^Runtime_State) -> bool {
@@ -110,7 +124,7 @@ should_quit :: proc(runtime: ^Runtime_State) -> bool {
 	case "Software":
 		return soft.poll_should_quit(i32(runtime.keybinds.escape))
     case "SDL3": 
-        return sdl3.poll_should_quit(i32(runtime.keybinds.escape))
+        return Bsdl3.poll_should_quit(i32(runtime.keybinds.escape))
     case "Vulkan":
         return vk.poll_should_quit(i32(runtime.keybinds.escape))
     case "undefined":
@@ -194,7 +208,7 @@ shutdown_runtime :: proc(runtime: ^Runtime_State) {
 		width := runtime.config.window_width
 		height := runtime.config.window_height
 		fullscreen := runtime.config.fullscreen
-		if sdl3.get_window_state(&x, &y, &width, &height, &fullscreen) {
+		if Bsdl3.get_window_state(&x, &y, &width, &height, &fullscreen) {
 			runtime.config.window_x = x
 			runtime.config.window_y = y
 			runtime.config.window_width = width
@@ -256,7 +270,7 @@ shutdown_runtime :: proc(runtime: ^Runtime_State) {
 
 	switch runtime.config.renderer_backend {
 	case "SDL3":
-        sdl3.shutdown_window()
+        Bsdl3.shutdown_window()
 	case "Vulkan":
 		// engine cleanup is done in the backend for vulkan
 	case "Software":
@@ -273,7 +287,7 @@ shutdown_runtime :: proc(runtime: ^Runtime_State) {
 draw_frame :: proc(runtime: ^Runtime_State) {
 	switch runtime.config.renderer_backend {
 	case "SDL3":
-		sdl3.draw_frame(runtime, runtime.config.window_width, runtime.config.window_height)
+		Bsdl3.draw_frame(runtime, runtime.config.window_width, runtime.config.window_height)
 	case "Vulkan":
 		result := vk.engine_run(runtime)
 	case "Software":

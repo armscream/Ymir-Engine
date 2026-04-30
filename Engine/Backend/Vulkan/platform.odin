@@ -60,7 +60,7 @@ glfw_error_callback :: proc "c" (error: i32, description: cstring) {
 
 self := Engine {}
 
-init_window :: proc(window_name: string, x: i32, y: i32, width: i32, height: i32, debug: bool) {
+init_window :: proc(window_name: string, x: i32, y: i32, width: i32, height: i32) -> glfw.WindowHandle {
     // We initialize GLFW and create a window with it.
     ensure(bool(glfw.Init()), "Failed to initialize GLFW")
     
@@ -71,7 +71,7 @@ init_window :: proc(window_name: string, x: i32, y: i32, width: i32, height: i32
     window_name_c, _ := strings.clone_to_cstring(window_name, context.temp_allocator)
     if window_name_c == nil {
         glfw.Terminate()
-        return 
+        return nil
     }
 
     glfw.WindowHint(glfw.CLIENT_API, glfw.NO_API)  // Correct for Vulkan
@@ -79,22 +79,21 @@ init_window :: proc(window_name: string, x: i32, y: i32, width: i32, height: i32
 
     pos_x := c.int(x)
     pos_y := c.int(y)
-    self.Debug = debug
     self.window_extent = vk.Extent2D{u32(width), u32(height)}
     self.window = glfw.CreateWindow(width, height, window_name_c, nil, nil)
     if self.window == nil {
         log.error("Failed to create a Window")
         glfw.Terminate()
-        return     
+        return nil
     }
     glfw.SetWindowPos(self.window, pos_x, pos_y)
 
     if !engine_init(&self) {
         log.error("Failed to initialize Vulkan engine")
         destroy_window(self.window)
-        return 
+        return nil
     }
-    return
+    return self.window
 }
 
 

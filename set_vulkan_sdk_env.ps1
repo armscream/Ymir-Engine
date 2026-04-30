@@ -1,7 +1,7 @@
 # Vulkan SDK Environment Variable Setup Script
 # Run this script as Administrator to set Vulkan SDK variables system-wide
 
-$VulkanSDKRoot = "C:\VulkanSDK"
+
 $VulkanSDKVer = "C:\VulkanSDK\1.4.341.1"
 
 # Set VULKAN_SDK

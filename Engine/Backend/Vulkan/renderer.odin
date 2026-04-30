@@ -1,14 +1,16 @@
 package Vulkan
 
-// Core
 
+// Core
+import "core:log"
+import "core:fmt"
 // Vendor
 import vk "vendor:vulkan"
 
 
 
 draw_frame :: proc() {
-
+    fmt.println("drawing a frame")
     // --- Vulkan frame begin ---
     // 1. Acquire next image from swapchain
     //    - vkAcquireNextImageKHR(...)

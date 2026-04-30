@@ -1,8 +1,11 @@
 package game
 
-import "core:fmt"
 import ye "../Engine"
+import "base:runtime"
+import "core:fmt"
 import "core:math/linalg"
+
+import "vendor:glfw"
 
 
 a: ye.Vec3 = {0, 0, 1}
@@ -14,5 +17,9 @@ test :: proc() {
 }
 
 run :: proc() {
-	//test()	
+
+
+	test()
 }
+
+// deprecated for now

@@ -46,7 +46,8 @@ main :: proc() {
 		// Always run full shutdown sequence (save + cleanup), even on early returns.
 		defer ye.shutdown_runtime(&runtime)
 		// Initialize the game with the specified renderer backend
-		ye.init_engine(runtime.config, debug = ODIN_DEBUG) 
+		window, __ := ye.init_engine(runtime.config, debug = ODIN_DEBUG)
+
 		
 	switch startup_mode {
 	case ye.Engine_Startup.editor:
@@ -74,8 +75,7 @@ main :: proc() {
 					run_game = false
 					break
 				}
-				run() // Calling game loop in game.odin and destroying based off backend
-				ye.draw_frame(&runtime)
+				ye.draw_frame(&runtime) // Calling game loop in game.odin and destroying based off backend
 			}
 		}
 	}
