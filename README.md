@@ -9,17 +9,17 @@ Alpha intent: Feature-complete Minimum-Viable-Product for 1.0 release, but not y
   
     Editor -- Full 3d editor
       --- Important Editor features ---
-      Base editor - folder hierarchy panel              - completed
-      Base editor - folder creation                     - completed
-      Base editor - folder deletion                     - completed
-      Base editor - Backend selection and config saving - completed
-      Base editor - window management                   - completed
-      Base editor - layout reset button (to default)    - completed
-      Base editor - editor theme/font selection         - completed
+      Base editor - folder hierarchy panel              - needs refactor.
+      Base editor - folder creation                     - needs refactor.
+      Base editor - folder deletion                     - needs refactor.
+      Base editor - Backend selection and config saving - needs refactor.
+      Base editor - window management                   - needs refactor.
+      Base editor - layout reset button (to default)    - needs refactor.
+      Base editor - editor theme/font selection         - needs refactor.
       level and layer hierarchy + selection             - GUI implemented, non-functional
       asset management gui                              - basic functionality implemented
-      asset import gui                                  - completed
-      asset export gui                                  - completed
+      asset import gui                                  - needs refactor.
+      asset export gui                                  - needs refactor.
       gizmos                                            - not started
       level + layer editing                             - not started
       material node graph                               - not started
