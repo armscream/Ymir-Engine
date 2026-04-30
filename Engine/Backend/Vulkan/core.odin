@@ -51,7 +51,7 @@ engine_run :: proc(runtime: rawptr) -> (ok: bool) {
         }
         // End GLFW stuff
 
-        draw_frame()
+        engine_draw(&self) or_return
     }
 
     log.info("Exiting...")
