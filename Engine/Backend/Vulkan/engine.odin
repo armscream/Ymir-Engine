@@ -13,37 +13,6 @@ import glog "../../glogger"
 
 ODIN_DEBUG :: #config(ODIN_DEBUG, false)
 
-Engine :: struct {
-	// Platform
-	window_extent:         vk.Extent2D,
-	window:                glfw.WindowHandle,
-	is_initialized:        bool,
-	stop_rendering:        bool,
-	// Vulkan
-	vk_instance:           vk.Instance,
-	vk_physical_device:    vk.PhysicalDevice,
-	vk_surface:            vk.SurfaceKHR,
-	vk_device:             vk.Device,
-	vk_debug_messenger:    vk.DebugUtilsMessengerEXT,
-	// Swapchain
-	vk_swapchain:          vk.SwapchainKHR,
-	swapchain_extent:      vk.Extent2D,
-	swapchain_format:      vk.Format,
-	swapchain_images:      []vk.Image,
-	swapchain_image_views: []vk.ImageView,
-	vkb:                   struct {
-		instance:        ^vkb.Instance,
-		physical_device: ^vkb.Physical_Device,
-		device:          ^vkb.Device,
-		swapchain:       ^vkb.Swapchain,
-	},
-	// Frame resources
-	frames:                [FRAME_OVERLAP]Frame_Data,
-	frame_number:          int,
-	graphics_queue:        vk.Queue,
-	graphics_queue_family: u32,
-}
-
 Frame_Data :: struct {
 	command_pool:          vk.CommandPool,
 	main_command_buffer:   vk.CommandBuffer,
@@ -54,6 +23,44 @@ Frame_Data :: struct {
 }
 
 FRAME_OVERLAP :: 2
+
+Engine :: struct {
+	// Platform
+	window_extent:              vk.Extent2D,
+	window:                     glfw.WindowHandle,
+	is_initialized:             bool,
+	stop_rendering:             bool,
+
+	// GPU Context
+	vk_debug_messenger:         vk.DebugUtilsMessengerEXT,
+	vk_instance:                vk.Instance,
+	vk_physical_device:         vk.PhysicalDevice,
+	vk_surface:                 vk.SurfaceKHR,
+	vk_device:                  vk.Device,
+
+	// Swapchain
+	vk_swapchain:               vk.SwapchainKHR,
+	swapchain_format:           vk.Format,
+	swapchain_extent:           vk.Extent2D,
+	swapchain_images:           []vk.Image,
+	swapchain_image_views:      []vk.ImageView,
+	swapchain_image_semaphores: []vk.Semaphore,
+
+	// vk-bootstrap
+	vkb:                        struct {
+		instance:        ^vkb.Instance,
+		physical_device: ^vkb.Physical_Device,
+		device:          ^vkb.Device,
+		swapchain:       ^vkb.Swapchain,
+	},
+
+	// Frame resources
+	frames:                     [FRAME_OVERLAP]Frame_Data,
+	frame_number:               int,
+	graphics_queue:             vk.Queue,
+	graphics_queue_family:      u32,
+}
+
 
 @(require_results)
 engine_init :: proc(self: ^Engine) -> (ok: bool) {
@@ -87,12 +94,17 @@ engine_cleanup :: proc(self: ^Engine) {
 		return
 	}
 
-    // Make sure the gpu has stopped doing its things
-    ensure(vk.DeviceWaitIdle(self.vk_device) == .SUCCESS)
+	// Make sure the gpu has stopped doing its things
+	ensure(vk.DeviceWaitIdle(self.vk_device) == .SUCCESS)
 
-    for &frame in self.frames {
-        vk.DestroyCommandPool(self.vk_device, frame.command_pool, nil)
-    }
+	for &frame in self.frames {
+		vk.DestroyCommandPool(self.vk_device, frame.command_pool, nil)
+
+		// Destroy sync objects
+		vk.DestroyFence(self.vk_device, frame.render_fence, nil)
+		vk.DestroySemaphore(self.vk_device, frame.render_semaphore, nil)
+		vk.DestroySemaphore(self.vk_device, frame.swapchain_semaphore, nil)
+	}
 
 	engine_destroy_swapchain(self)
 
@@ -104,7 +116,6 @@ engine_cleanup :: proc(self: ^Engine) {
 
 	vkb.destroy_physical_device(self.vkb.physical_device)
 	vkb.destroy_instance(self.vkb.instance)
-
 
 	destroy_window(self.window)
 }
@@ -207,6 +218,12 @@ engine_init_vulkan :: proc(self: ^Engine) -> (ok: bool) {
 		vkb.destroy_surface(self.vkb.instance, self.vk_surface)
 	}
 
+	// Vulkan 1.1 features
+	features_11 := vk.PhysicalDeviceVulkan11Features {
+		shaderDrawParameters = true,
+	}
+
+
 	// Vulkan 1.2 features
 	features_12 := vk.PhysicalDeviceVulkan12Features {
 		// Allows shaders to directly access buffer memory using GPU addresses
@@ -293,7 +310,6 @@ engine_create_swapchain :: proc(self: ^Engine, extent: vk.Extent2D) -> (ok: bool
 		&builder,
 		{format = self.swapchain_format, colorSpace = .SRGB_NONLINEAR},
 	)
-	// Present mode: FIFO is hard Vsync
 	vkb.swapchain_builder_set_present_mode(&builder, .FIFO)
 	vkb.swapchain_builder_set_desired_extent(&builder, extent.width, extent.height)
 	vkb.swapchain_builder_add_image_usage_flags(&builder, {.TRANSFER_DST})
@@ -304,97 +320,99 @@ engine_create_swapchain :: proc(self: ^Engine, extent: vk.Extent2D) -> (ok: bool
 
 	self.swapchain_images = vkb.swapchain_get_images(self.vkb.swapchain) or_return
 	self.swapchain_image_views = vkb.swapchain_get_image_views(self.vkb.swapchain) or_return
+	self.swapchain_image_semaphores = make([]vk.Semaphore, len(self.swapchain_images))[:]
+	defer if !ok {delete(self.swapchain_image_semaphores)}
+
+	// These need to be created here so that they are recreated when we resize.
+	semaphore_create_info := semaphore_create_info()
+	for &semaphore in self.swapchain_image_semaphores {
+		vk_check(
+			vk.CreateSemaphore(self.vk_device, &semaphore_create_info, nil, &semaphore),
+		) or_return
+	}
 
 	return true
 }
+
 
 engine_init_swapchain :: proc(self: ^Engine) -> (ok: bool) {
 	engine_create_swapchain(self, self.window_extent) or_return
 	return true
 }
 
+@(require_results)
 engine_init_commands :: proc(self: ^Engine) -> (ok: bool) {
-    // Create a command pool for commands submitted to the graphics queue.
-    // We also want the pool to allow for resetting of individual command buffers.
-    command_pool_info := vk.CommandPoolCreateInfo {
-        sType            = .COMMAND_POOL_CREATE_INFO,
-        pNext            = nil,
-        flags            = {.RESET_COMMAND_BUFFER},
-        queueFamilyIndex = self.graphics_queue_family,
-    }
+	// Create a command pool for commands submitted to the graphics queue.
+	// We also want the pool to allow for resetting of individual command buffers.
+	command_pool_info := command_pool_create_info(
+		self.graphics_queue_family,
+		{.RESET_COMMAND_BUFFER},
+	)
 
-    for &frame in self.frames {
-        // Create the command pool
-        vk_check(
-            vk.CreateCommandPool(
-                self.vk_device,
-                &command_pool_info,
-                nil,
-                &frame.command_pool,
-            ),
-        ) or_return
+	for i in 0 ..< FRAME_OVERLAP {
+		// Create the command pool
+		vk_check(
+			vk.CreateCommandPool(
+				self.vk_device,
+				&command_pool_info,
+				nil,
+				&self.frames[i].command_pool,
+			),
+		) or_return
 
-        // Allocate the default command buffer that we will use for rendering
-        cmd_alloc_info := vk.CommandBufferAllocateInfo {
-            sType              = .COMMAND_BUFFER_ALLOCATE_INFO,
-            pNext              = nil,
-            commandPool        = frame.command_pool,
-            commandBufferCount = 1,
-            level              = .PRIMARY,
-        }
+		// Allocate the default command buffer that we will use for rendering
+		cmd_alloc_info := command_buffer_allocate_info(self.frames[i].command_pool)
 
-        vk_check(
-            vk.AllocateCommandBuffers(
-                self.vk_device,
-                &cmd_alloc_info,
-                &frame.main_command_buffer,
-            ),
-        ) or_return
-    }
+		vk_check(
+			vk.AllocateCommandBuffers(
+				self.vk_device,
+				&cmd_alloc_info,
+				&self.frames[i].main_command_buffer,
+			),
+		) or_return
+	}
 
-    return true
+	return true
 }
 
 engine_get_current_frame :: #force_inline proc(self: ^Engine) -> ^Frame_Data #no_bounds_check {
 	return &self.frames[self.frame_number % FRAME_OVERLAP]
 }
 
+@(require_results)
 engine_init_sync_structures :: proc(self: ^Engine) -> (ok: bool) {
-    // Create synchronization structures, one fence to control when the gpu has finished
-    // rendering the frame, and 2 semaphores to sincronize rendering with swapchain. We want
-    // the fence to start signalled so we can wait on it on the first frame
-    fence_create_info := fence_create_info({.SIGNALED})
-    semaphore_create_info := semaphore_create_info()
+	// Create synchronization structures, one fence to control when the gpu has finished
+	// rendering the frame, and a semaphore to synchronize rendering with swapchain. We want
+	// the fence to start signaled so we can wait on it on the first frame.
+	fence_create_info := fence_create_info({.SIGNALED})
+	semaphore_create_info := semaphore_create_info()
 
-    for &frame in self.frames {
-          vk_check(
-            vk.CreateFence(self.vk_device, &fence_create_info, nil, &frame.render_fence),
-        ) or_return
+	for &frame in self.frames {
+		vk_check(
+			vk.CreateFence(self.vk_device, &fence_create_info, nil, &frame.render_fence),
+		) or_return
 
-        vk_check(
-            vk.CreateSemaphore(
-                self.vk_device,
-                &semaphore_create_info,
-                nil,
-                &frame.swapchain_semaphore,
-            ),
-        ) or_return
-        vk_check(
-            vk.CreateSemaphore(
-                self.vk_device,
-                &semaphore_create_info,
-                nil,
-                &frame.render_semaphore,
-            ),
-        ) or_return
-    }
+		vk_check(
+			vk.CreateSemaphore(
+				self.vk_device,
+				&semaphore_create_info,
+				nil,
+				&frame.swapchain_semaphore,
+			),
+		) or_return
+	}
 
-    return true
+	return true
 }
 
 engine_destroy_swapchain :: proc(self: ^Engine) {
-	vkb.swapchain_destroy_image_views(self.vkb.swapchain, self.swapchain_image_views)
 	vkb.destroy_swapchain(self.vkb.swapchain)
+	vkb.swapchain_destroy_image_views(self.vkb.swapchain, self.swapchain_image_views)
+
+	for semaphore in self.swapchain_image_semaphores {
+		vk.DestroySemaphore(self.vk_device, semaphore, nil)
+	}
+
 	delete(self.swapchain_image_views)
 	delete(self.swapchain_images)
 }
