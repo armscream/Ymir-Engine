@@ -10,6 +10,9 @@ import "core:fmt"
 import vk "vendor:vulkan"
 import glfw "vendor:glfw"
 
+// Local packages
+import "../../Libs/vma"
+
 RENDERMODE :: enum {
     FIFO_RELAXED, // Tutorial uses this one
     MAILBOX, // Preferred later
@@ -17,6 +20,16 @@ RENDERMODE :: enum {
     FIFO,
 }
 RENDER_MODE := RENDERMODE.FIFO_RELAXED
+
+Allocated_Image :: struct {
+    device:       vk.Device,
+    image:        vk.Image,
+    image_view:   vk.ImageView,
+    image_extent: vk.Extent3D,
+    image_format: vk.Format,
+    allocator:    vma.Allocator,
+    allocation:   vma.Allocation,
+}
 
 @(require_results)
 vk_check :: #force_inline proc(
@@ -57,4 +70,9 @@ engine_run :: proc(runtime: rawptr) -> (ok: bool) {
     log.info("Exiting...")
 
     return true
+}
+
+destroy_image :: proc(self: Allocated_Image) {
+    vk.DestroyImageView(self.device, self.image_view, nil)
+    vma.destroy_image(self.allocator, self.image, self.allocation)
 }

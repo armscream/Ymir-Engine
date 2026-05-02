@@ -9,6 +9,7 @@ import glfw "vendor:glfw"
 import vk "vendor:vulkan"
 // Local packages
 import "../../Libs/vkb"
+import "../../Libs/vma"
 import glog "../../glogger"
 
 ODIN_DEBUG :: #config(ODIN_DEBUG, false)
@@ -19,6 +20,7 @@ Frame_Data :: struct {
 	swapchain_semaphore:   vk.Semaphore,
 	render_semaphore:      vk.Semaphore,
 	render_fence:          vk.Fence,
+	deletion_queue:        Deletion_Queue,
 	swapchain_image_index: u32,
 }
 
@@ -26,28 +28,30 @@ FRAME_OVERLAP :: 2
 
 Engine :: struct {
 	// Platform
-	window_extent:              vk.Extent2D,
-	window:                     glfw.WindowHandle,
-	is_initialized:             bool,
-	stop_rendering:             bool,
+	window_extent:                vk.Extent2D,
+	window:                       glfw.WindowHandle,
+	main_deletion_queue:          Deletion_Queue,
+	is_initialized:               bool,
+	stop_rendering:               bool,
+	vma_allocator:                vma.Allocator,
 
 	// GPU Context
-	vk_debug_messenger:         vk.DebugUtilsMessengerEXT,
-	vk_instance:                vk.Instance,
-	vk_physical_device:         vk.PhysicalDevice,
-	vk_surface:                 vk.SurfaceKHR,
-	vk_device:                  vk.Device,
+	vk_debug_messenger:           vk.DebugUtilsMessengerEXT,
+	vk_instance:                  vk.Instance,
+	vk_physical_device:           vk.PhysicalDevice,
+	vk_surface:                   vk.SurfaceKHR,
+	vk_device:                    vk.Device,
 
 	// Swapchain
-	vk_swapchain:               vk.SwapchainKHR,
-	swapchain_format:           vk.Format,
-	swapchain_extent:           vk.Extent2D,
-	swapchain_images:           []vk.Image,
-	swapchain_image_views:      []vk.ImageView,
-	swapchain_image_semaphores: []vk.Semaphore,
+	vk_swapchain:                 vk.SwapchainKHR,
+	swapchain_format:             vk.Format,
+	swapchain_extent:             vk.Extent2D,
+	swapchain_images:             []vk.Image,
+	swapchain_image_views:        []vk.ImageView,
+	swapchain_image_semaphores:   []vk.Semaphore,
 
 	// vk-bootstrap
-	vkb:                        struct {
+	vkb:                          struct {
 		instance:        ^vkb.Instance,
 		physical_device: ^vkb.Physical_Device,
 		device:          ^vkb.Device,
@@ -55,10 +59,23 @@ Engine :: struct {
 	},
 
 	// Frame resources
-	frames:                     [FRAME_OVERLAP]Frame_Data,
-	frame_number:               int,
-	graphics_queue:             vk.Queue,
-	graphics_queue_family:      u32,
+	frames:                       [FRAME_OVERLAP]Frame_Data,
+	frame_number:                 int,
+	graphics_queue:               vk.Queue,
+	graphics_queue_family:        u32,
+
+	// Draw resources
+	draw_image:                   Allocated_Image,
+	draw_extent:                  vk.Extent2D,
+
+	// Descriptors
+	global_descriptor_allocator:  Descriptor_Allocator,
+	draw_image_descriptors:       vk.DescriptorSet,
+	draw_image_descriptor_layout: vk.DescriptorSetLayout,
+
+	// Pipeline
+	gradient_pipeline:            vk.Pipeline,
+	gradient_pipeline_layout:     vk.PipelineLayout,
 }
 
 
@@ -82,6 +99,10 @@ engine_init :: proc(self: ^Engine) -> (ok: bool) {
 
 	engine_init_sync_structures(self) or_return
 
+	engine_init_descriptors(self) or_return
+
+	engine_init_pipelines(self) or_return
+
 	// Everything went fine
 	self.is_initialized = true
 
@@ -104,7 +125,13 @@ engine_cleanup :: proc(self: ^Engine) {
 		vk.DestroyFence(self.vk_device, frame.render_fence, nil)
 		vk.DestroySemaphore(self.vk_device, frame.render_semaphore, nil)
 		vk.DestroySemaphore(self.vk_device, frame.swapchain_semaphore, nil)
+
+		// Flush and destroy the peer frame deletion queue
+		deletion_queue_destroy(&frame.deletion_queue)
 	}
+
+	// Flush and destroy the global deletion queue
+	deletion_queue_destroy(&self.main_deletion_queue)
 
 	engine_destroy_swapchain(self)
 
@@ -271,6 +298,27 @@ engine_init_vulkan :: proc(self: ^Engine) -> (ok: bool) {
 	self.graphics_queue = vkb.device_get_queue(self.vkb.device, .Graphics) or_return
 	self.graphics_queue_family = vkb.device_get_queue_index(self.vkb.device, .Graphics)
 
+	// Initialize global deletion queue
+	deletion_queue_init(&self.main_deletion_queue, self.vk_device)
+
+	// Initializes a subset of Vulkan functions required by VMA
+	vma_vulkan_functions := vma.create_vulkan_functions()
+
+	allocator_create_info: vma.Allocator_Create_Info = {
+		flags            = {.Buffer_Device_Address},
+		instance         = self.vk_instance,
+		physical_device  = self.vk_physical_device,
+		device           = self.vk_device,
+		vulkan_functions = &vma_vulkan_functions,
+	}
+
+	vk_check(
+		vma.create_allocator(allocator_create_info, &self.vma_allocator),
+		"Failed to Create Vulkan Memory Allocator",
+	) or_return
+
+	deletion_queue_push(&self.main_deletion_queue, self.vma_allocator)
+
 	return true
 }
 
@@ -337,6 +385,71 @@ engine_create_swapchain :: proc(self: ^Engine, extent: vk.Extent2D) -> (ok: bool
 
 engine_init_swapchain :: proc(self: ^Engine) -> (ok: bool) {
 	engine_create_swapchain(self, self.window_extent) or_return
+
+	// Draw image size will match the window
+	draw_image_extent := vk.Extent3D {
+		width  = self.window_extent.width,
+		height = self.window_extent.height,
+		depth  = 1,
+	}
+
+	// Hardcoding the draw format to 32 bit float
+	self.draw_image.image_format = .R16G16B16A16_SFLOAT
+	self.draw_image.image_extent = draw_image_extent
+	self.draw_image.allocator = self.vma_allocator
+	self.draw_image.device = self.vk_device
+
+	draw_image_usages := vk.ImageUsageFlags {
+		.TRANSFER_SRC,
+		.TRANSFER_DST,
+		.STORAGE,
+		.COLOR_ATTACHMENT,
+	}
+
+	rimg_info := image_create_info(
+		self.draw_image.image_format,
+		draw_image_usages,
+		draw_image_extent,
+	)
+
+	// For the draw image, we want to allocate it from gpu local memory
+	rimg_allocinfo := vma.Allocation_Create_Info {
+		usage          = .Gpu_Only,
+		required_flags = {.DEVICE_LOCAL},
+	}
+
+	// Allocate and create the image
+	vk_check(
+		vma.create_image(
+			self.vma_allocator,
+			rimg_info,
+			rimg_allocinfo,
+			&self.draw_image.image,
+			&self.draw_image.allocation,
+			nil,
+		),
+	) or_return
+	defer if !ok {
+		vma.destroy_image(self.vma_allocator, self.draw_image.image, nil)
+	}
+
+	// Build a image-view for the draw image to use for rendering
+	rview_info := imageview_create_info(
+		self.draw_image.image_format,
+		self.draw_image.image,
+		{.COLOR},
+	)
+
+	vk_check(
+		vk.CreateImageView(self.vk_device, &rview_info, nil, &self.draw_image.image_view),
+	) or_return
+	defer if !ok {
+		vk.DestroyImageView(self.vk_device, self.draw_image.image_view, nil)
+	}
+
+	// Add to deletion queues
+	deletion_queue_push(&self.main_deletion_queue, self.draw_image)
+
 	return true
 }
 
@@ -350,6 +463,8 @@ engine_init_commands :: proc(self: ^Engine) -> (ok: bool) {
 	)
 
 	for i in 0 ..< FRAME_OVERLAP {
+		// Create peer frame deletion queue
+		deletion_queue_init(&self.frames[i].deletion_queue, self.vk_device)
 		// Create the command pool
 		vk_check(
 			vk.CreateCommandPool(
@@ -420,4 +535,109 @@ engine_destroy_swapchain :: proc(self: ^Engine) {
 destroy_window :: proc(window: glfw.WindowHandle) {
 	glfw.DestroyWindow(window)
 	glfw.Terminate()
+}
+
+engine_init_descriptors :: proc(self: ^Engine) -> (ok: bool) {
+	// Create a descriptor pool that will hold 10 sets with 1 image each
+	sizes := []Pool_Size_Ratio{{.STORAGE_IMAGE, 1}}
+
+	descriptor_allocator_init_pool(
+		&self.global_descriptor_allocator,
+		self.vk_device,
+		10,
+		sizes,
+	) or_return
+	deletion_queue_push(&self.main_deletion_queue, self.global_descriptor_allocator.pool)
+
+	{
+		// Make the descriptor set layout for our compute draw
+		builder: Descriptor_Layout_Builder
+		descriptor_layout_builder_init(&builder, self.vk_device)
+		descriptor_layout_builder_add_binding(&builder, 0, .STORAGE_IMAGE)
+		self.draw_image_descriptor_layout = descriptor_layout_builder_build(
+			&builder,
+			{.COMPUTE},
+		) or_return
+	}
+	deletion_queue_push(&self.main_deletion_queue, self.draw_image_descriptor_layout)
+
+	// Allocate a descriptor set for our draw image
+	self.draw_image_descriptors = descriptor_allocator_allocate(
+		&self.global_descriptor_allocator,
+		self.vk_device,
+		&self.draw_image_descriptor_layout,
+	) or_return
+
+	img_info := vk.DescriptorImageInfo {
+		imageLayout = .GENERAL,
+		imageView   = self.draw_image.image_view,
+	}
+
+	draw_image_write := vk.WriteDescriptorSet {
+		sType           = .WRITE_DESCRIPTOR_SET,
+		dstBinding      = 0,
+		dstSet          = self.draw_image_descriptors,
+		descriptorCount = 1,
+		descriptorType  = .STORAGE_IMAGE,
+		pImageInfo      = &img_info,
+	}
+
+	vk.UpdateDescriptorSets(self.vk_device, 1, &draw_image_write, 0, nil)
+
+	return true
+}
+
+engine_init_pipelines :: proc(self: ^Engine) -> (ok: bool) {
+	engine_init_background_pipelines(self) or_return
+	return true
+}
+
+engine_init_background_pipelines :: proc(self: ^Engine) -> (ok: bool) {
+	compute_layout := vk.PipelineLayoutCreateInfo {
+		sType          = .PIPELINE_LAYOUT_CREATE_INFO,
+		pSetLayouts    = &self.draw_image_descriptor_layout,
+		setLayoutCount = 1,
+	}
+
+	vk_check(
+		vk.CreatePipelineLayout(
+			self.vk_device,
+			&compute_layout,
+			nil,
+			&self.gradient_pipeline_layout,
+		),
+	) or_return
+
+	GRADIENT_COMP_SPV :: #load("/shaders/compiled/gradient.comp.spv")
+	gradient_shader := create_shader_module(self.vk_device, GRADIENT_COMP_SPV) or_return
+	defer vk.DestroyShaderModule(self.vk_device, gradient_shader, nil)
+
+	stage_info := vk.PipelineShaderStageCreateInfo {
+		sType  = .PIPELINE_SHADER_STAGE_CREATE_INFO,
+		stage  = {.COMPUTE},
+		module = gradient_shader,
+		pName  = "main",
+	}
+
+	compute_pipeline_create_info := vk.ComputePipelineCreateInfo {
+		sType  = .COMPUTE_PIPELINE_CREATE_INFO,
+		layout = self.gradient_pipeline_layout,
+		stage  = stage_info,
+	}
+
+	vk_check(
+		vk.CreateComputePipelines(
+			self.vk_device,
+			0,
+			1,
+			&compute_pipeline_create_info,
+			nil,
+			&self.gradient_pipeline,
+		),
+	) or_return
+
+	deletion_queue_push(&self.main_deletion_queue, self.gradient_pipeline_layout)
+	deletion_queue_push(&self.main_deletion_queue, self.gradient_pipeline)
+
+	return true
 }

@@ -36,3 +36,38 @@ transition_image :: proc(
     vk.CmdPipelineBarrier2(cmd, &dep_info)
 }
 
+copy_image_to_image :: proc(
+    cmd: vk.CommandBuffer,
+    source: vk.Image,
+    destination: vk.Image,
+    src_size: vk.Extent2D,
+    dst_size: vk.Extent2D,
+) {
+    blit_region := vk.ImageBlit2 {
+        sType = .IMAGE_BLIT_2,
+        pNext = nil,
+        srcOffsets = [2]vk.Offset3D {
+            {0, 0, 0},
+            {x = i32(src_size.width), y = i32(src_size.height), z = 1},
+        },
+        dstOffsets = [2]vk.Offset3D {
+            {0, 0, 0},
+            {x = i32(dst_size.width), y = i32(dst_size.height), z = 1},
+        },
+        srcSubresource = {aspectMask = {.COLOR}, mipLevel = 0, baseArrayLayer = 0, layerCount = 1},
+        dstSubresource = {aspectMask = {.COLOR}, mipLevel = 0, baseArrayLayer = 0, layerCount = 1},
+    }
+
+    blit_info := vk.BlitImageInfo2 {
+        sType          = .BLIT_IMAGE_INFO_2,
+        srcImage       = source,
+        srcImageLayout = .TRANSFER_SRC_OPTIMAL,
+        dstImage       = destination,
+        dstImageLayout = .TRANSFER_DST_OPTIMAL,
+        filter         = .LINEAR,
+        regionCount    = 1,
+        pRegions       = &blit_region,
+    }
+
+    vk.CmdBlitImage2(cmd, &blit_info)
+}
