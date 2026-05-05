@@ -35,6 +35,12 @@ if (-not (Test-Path -LiteralPath $ConfigPath)) {
 $configJson = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
 $gameName = [string]$configJson.game_name
 $safeGameName = Get-SafeFileName -Name $gameName
+$imguiLibDir = Join-Path -Path $PSScriptRoot -ChildPath "Engine/Libs/imgui"
+$imguiLibPath = Join-Path -Path $imguiLibDir -ChildPath "imgui_windows_x64.lib"
+
+if (-not (Test-Path -LiteralPath $imguiLibPath)) {
+    throw "ImGui static library not found: $imguiLibPath"
+}
 
 
 # Clear the build directory before building
@@ -50,7 +56,8 @@ Write-Host "Output executable: $outPath"
 $odinArgs = @(
     "build",
     $AppDir,
-    "-out:$outPath"
+    "-out:$outPath",
+    "-extra-linker-flags:/LIBPATH:`"$imguiLibDir`" imgui_windows_x64.lib /LIBPATH:`"C:\VulkanSDK\1.4.341.1\Lib`" vulkan-1.lib"
 )
 
 & $OdinExe @odinArgs

@@ -48,9 +48,43 @@ import "base:runtime"
 import "core:log"
 import "core:c"
 import "core:strings"
+import "core:fmt"
 // Vendor
 import vk "vendor:vulkan"
 import glfw "vendor:glfw"
+
+
+Monitor_Info :: struct {
+    refresh_rate:      u32,
+    frame_time_target: f64, // in seconds
+}
+
+WINDOW_TITLE_BUFFER_LEN :: #config(WINDOW_TITLE_BUFFER_LEN, 256)
+
+window_update_title_with_fps :: proc(window: glfw.WindowHandle, title: string, fps: f64) {
+    buffer: [WINDOW_TITLE_BUFFER_LEN]byte
+    formatted := fmt.bprintf(buffer[:], "%s - FPS = %.2f", title, fps)
+    if len(formatted) >= WINDOW_TITLE_BUFFER_LEN {
+        buffer[WINDOW_TITLE_BUFFER_LEN - 1] = 0 // Truncate and null-terminate
+        log.warnf(
+            "Window title truncated: buffer size (%d) exceeded by '%s'",
+            WINDOW_TITLE_BUFFER_LEN,
+            formatted,
+        )
+    } else if len(formatted) == 0 || buffer[len(formatted) - 1] != 0 {
+        buffer[len(formatted)] = 0
+    }
+    glfw.SetWindowTitle(window, cstring(raw_data(buffer[:])))
+}
+
+get_primary_monitor_info :: proc() -> (info: Monitor_Info) {
+    mode := glfw.GetVideoMode(glfw.GetPrimaryMonitor())
+    info = Monitor_Info {
+        refresh_rate      = u32(mode.refresh_rate),
+        frame_time_target = 1.0 / f64(mode.refresh_rate),
+    }
+    return
+}
 
 glfw_error_callback :: proc "c" (error: i32, description: cstring) {
     context = runtime.default_context()
@@ -63,13 +97,15 @@ self := Engine {}
 init_window :: proc(window_name: string, x: i32, y: i32, width: i32, height: i32) -> glfw.WindowHandle {
     // We initialize GLFW and create a window with it.
     ensure(bool(glfw.Init()), "Failed to initialize GLFW")
+
+    self.window_title = strings.clone(window_name, context.allocator)
     
     glfw.SetErrorCallback(glfw_error_callback)
 
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
 
-    window_name_c, _ := strings.clone_to_cstring(window_name, context.temp_allocator)
-    if window_name_c == nil {
+    TITLE, _ := strings.clone_to_cstring(window_name, context.temp_allocator)
+    if TITLE == nil {
         glfw.Terminate()
         return nil
     }
@@ -80,7 +116,7 @@ init_window :: proc(window_name: string, x: i32, y: i32, width: i32, height: i32
     pos_x := c.int(x)
     pos_y := c.int(y)
     self.window_extent = vk.Extent2D{u32(width), u32(height)}
-    self.window = glfw.CreateWindow(width, height, window_name_c, nil, nil)
+    self.window = glfw.CreateWindow(width, height, TITLE, nil, nil)
     if self.window == nil {
         log.error("Failed to create a Window")
         glfw.Terminate()

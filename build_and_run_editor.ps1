@@ -65,6 +65,12 @@ function Stop-RunningEditorExe {
 
 $root = $PSScriptRoot
 Set-Location $root
+$imguiLibDir = Join-Path -Path $root -ChildPath "Engine/Libs/imgui"
+$imguiLibPath = Join-Path -Path $imguiLibDir -ChildPath "imgui_windows_x64.lib"
+
+if (-not (Test-Path -LiteralPath $imguiLibPath)) {
+    throw "ImGui static library not found: $imguiLibPath"
+}
 
 Write-Host "Building editor from: $EditorDir"
 Write-Host "Output executable: $OutPath"
@@ -82,7 +88,7 @@ Stop-RunningEditorExe -ExePath $exe
 $odinDist = Resolve-OdinDist -OdinCommand $OdinExe
 Write-Host "Using Odin dist: $odinDist"
 
-& $OdinExe build $EditorDir "-out:$OutPath"
+& $OdinExe build $EditorDir "-out:$OutPath" "-extra-linker-flags:/LIBPATH:`"$imguiLibDir`" imgui_windows_x64.lib /LIBPATH:`"C:\VulkanSDK\1.4.341.1\Lib`" vulkan-1.lib"
 if ($LASTEXITCODE -ne 0) {
     throw "Odin build failed with exit code $LASTEXITCODE"
 }

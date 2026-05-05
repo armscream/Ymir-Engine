@@ -8,6 +8,9 @@ import "core:log"
 import glfw "vendor:glfw"
 import vk "vendor:vulkan"
 // Local packages
+import im "../../Libs/imgui"
+import im_glfw "../../Libs/imgui/imgui_impl_glfw"
+import im_vk "../../Libs/imgui/imgui_impl_vulkan"
 import "../../Libs/vkb"
 import "../../Libs/vma"
 import glog "../../glogger"
@@ -30,6 +33,7 @@ Engine :: struct {
 	// Platform
 	window_extent:                vk.Extent2D,
 	window:                       glfw.WindowHandle,
+	window_title:                 string,
 	main_deletion_queue:          Deletion_Queue,
 	is_initialized:               bool,
 	stop_rendering:               bool,
@@ -76,6 +80,29 @@ Engine :: struct {
 	// Pipeline
 	gradient_pipeline:            vk.Pipeline,
 	gradient_pipeline_layout:     vk.PipelineLayout,
+
+	// Effects
+	background_effects:           [Compute_Effect_Kind]Compute_Effect,
+	current_background_effect:    Compute_Effect_Kind,
+}
+
+Compute_Push_Constants :: struct {
+	data1: [4]f32,
+	data2: [4]f32,
+	data3: [4]f32,
+	data4: [4]f32,
+}
+
+Compute_Effect_Kind :: enum {
+	Gradient,
+	Sky,
+}
+
+Compute_Effect :: struct {
+	name:     cstring,
+	pipeline: vk.Pipeline,
+	layout:   vk.PipelineLayout,
+	data:     Compute_Push_Constants,
 }
 
 
@@ -102,6 +129,8 @@ engine_init :: proc(self: ^Engine) -> (ok: bool) {
 	engine_init_descriptors(self) or_return
 
 	engine_init_pipelines(self) or_return
+
+	engine_init_imgui(self) or_return
 
 	// Everything went fine
 	self.is_initialized = true
@@ -143,6 +172,7 @@ engine_cleanup :: proc(self: ^Engine) {
 
 	vkb.destroy_physical_device(self.vkb.physical_device)
 	vkb.destroy_instance(self.vkb.instance)
+
 
 	destroy_window(self.window)
 }
@@ -322,32 +352,6 @@ engine_init_vulkan :: proc(self: ^Engine) -> (ok: bool) {
 	return true
 }
 
-/* Move to file-scope when the callback isnt working otherwise...
-default_debug_callback :: proc "system" (
-	message_severity: vk.DebugUtilsMessageSeverityFlagsEXT,
-	message_types: vk.DebugUtilsMessageTypeFlagsEXT,
-	p_callback_data: ^vk.DebugUtilsMessengerCallbackDataEXT,
-	p_user_data: rawptr,
-) -> b32 {
-	context = runtime.default_context()
-	context.logger = glog.g_logger
-	fmt.println("[VK DEBUG] === DEBUG CALLBACK TRIGGERED ===")
-
-	if .WARNING in message_severity do fmt.println("[VK DEBUG] Validation layer warning:")
-
-	if .WARNING in message_severity {
-		log.warnf("[%v]: %s", message_types, p_callback_data.pMessage)
-	} else if .ERROR in message_severity {
-		log.errorf("[%v]: %s", message_types, p_callback_data.pMessage)
-		runtime.debug_trap()
-	} else {
-		log.infof("[%v]: %s", message_types, p_callback_data.pMessage)
-	}
-	return false // Applications must return false here
-}
-*/
-
-
 engine_create_swapchain :: proc(self: ^Engine, extent: vk.Extent2D) -> (ok: bool) {
 	self.swapchain_format = .B8G8R8A8_UNORM
 
@@ -358,7 +362,10 @@ engine_create_swapchain :: proc(self: ^Engine, extent: vk.Extent2D) -> (ok: bool
 		&builder,
 		{format = self.swapchain_format, colorSpace = .SRGB_NONLINEAR},
 	)
+
 	vkb.swapchain_builder_set_present_mode(&builder, .FIFO)
+	vkb.swapchain_builder_set_present_mode(&builder, .IMMEDIATE)
+	vkb.swapchain_builder_set_present_mode(&builder, .MAILBOX)
 	vkb.swapchain_builder_set_desired_extent(&builder, extent.width, extent.height)
 	vkb.swapchain_builder_add_image_usage_flags(&builder, {.TRANSFER_DST})
 
@@ -381,7 +388,6 @@ engine_create_swapchain :: proc(self: ^Engine, extent: vk.Extent2D) -> (ok: bool
 
 	return true
 }
-
 
 engine_init_swapchain :: proc(self: ^Engine) -> (ok: bool) {
 	engine_create_swapchain(self, self.window_extent) or_return
@@ -588,15 +594,25 @@ engine_init_descriptors :: proc(self: ^Engine) -> (ok: bool) {
 }
 
 engine_init_pipelines :: proc(self: ^Engine) -> (ok: bool) {
+	// Compute pipelines
 	engine_init_background_pipelines(self) or_return
+
 	return true
 }
 
 engine_init_background_pipelines :: proc(self: ^Engine) -> (ok: bool) {
+	push_constant := vk.PushConstantRange {
+		offset     = 0,
+		size       = size_of(Compute_Push_Constants),
+		stageFlags = {.COMPUTE},
+	}
+
 	compute_layout := vk.PipelineLayoutCreateInfo {
-		sType          = .PIPELINE_LAYOUT_CREATE_INFO,
-		pSetLayouts    = &self.draw_image_descriptor_layout,
-		setLayoutCount = 1,
+		sType                  = .PIPELINE_LAYOUT_CREATE_INFO,
+		pSetLayouts            = &self.draw_image_descriptor_layout,
+		setLayoutCount         = 1,
+		pPushConstantRanges    = &push_constant,
+		pushConstantRangeCount = 1,
 	}
 
 	vk_check(
@@ -608,14 +624,22 @@ engine_init_background_pipelines :: proc(self: ^Engine) -> (ok: bool) {
 		),
 	) or_return
 
-	GRADIENT_COMP_SPV :: #load("/shaders/compiled/gradient.comp.spv")
-	gradient_shader := create_shader_module(self.vk_device, GRADIENT_COMP_SPV) or_return
-	defer vk.DestroyShaderModule(self.vk_device, gradient_shader, nil)
+	gradient_color_shader := create_shader_module(
+		self.vk_device,
+		#load("/shaders/compiled/gradient_color.comp.spv"),
+	) or_return
+	defer vk.DestroyShaderModule(self.vk_device, gradient_color_shader, nil)
+
+	sky_shader := create_shader_module(
+		self.vk_device,
+		#load("/shaders/compiled/sky.comp.spv"),
+	) or_return
+	defer vk.DestroyShaderModule(self.vk_device, sky_shader, nil)
 
 	stage_info := vk.PipelineShaderStageCreateInfo {
 		sType  = .PIPELINE_SHADER_STAGE_CREATE_INFO,
 		stage  = {.COMPUTE},
-		module = gradient_shader,
+		module = gradient_color_shader,
 		pName  = "main",
 	}
 
@@ -625,6 +649,12 @@ engine_init_background_pipelines :: proc(self: ^Engine) -> (ok: bool) {
 		stage  = stage_info,
 	}
 
+	gradient_color := Compute_Effect {
+		layout = self.gradient_pipeline_layout,
+		name = "Gradient Color",
+		data = {data1 = {1, 0, 0, 1}, data2 = {0, 0, 1, 1}},
+	}
+
 	vk_check(
 		vk.CreateComputePipelines(
 			self.vk_device,
@@ -632,12 +662,135 @@ engine_init_background_pipelines :: proc(self: ^Engine) -> (ok: bool) {
 			1,
 			&compute_pipeline_create_info,
 			nil,
-			&self.gradient_pipeline,
+			&gradient_color.pipeline,
 		),
 	) or_return
 
+	// Change the shader module only to create the sky shader
+	compute_pipeline_create_info.stage.module = sky_shader
+
+	sky := Compute_Effect {
+		layout = self.gradient_pipeline_layout,
+		name = "Sky",
+		data = {data1 = {0.1, 0.2, 0.4, 0.97}},
+	}
+
+	vk_check(
+		vk.CreateComputePipelines(
+			self.vk_device,
+			0,
+			1,
+			&compute_pipeline_create_info,
+			nil,
+			&sky.pipeline,
+		),
+	) or_return
+
+	// Set the 2 background effects
+	self.background_effects[.Gradient] = gradient_color
+	self.background_effects[.Sky] = sky
+	//self.current_background_effect = .Gradient //////////////////////////
+	//self.gradient_pipeline = gradient_color.pipeline /////////////////////////////////
+
 	deletion_queue_push(&self.main_deletion_queue, self.gradient_pipeline_layout)
-	deletion_queue_push(&self.main_deletion_queue, self.gradient_pipeline)
+	deletion_queue_push(&self.main_deletion_queue, gradient_color.pipeline)
+	deletion_queue_push(&self.main_deletion_queue, sky.pipeline)
 
 	return true
+}
+
+engine_init_imgui :: proc(self: ^Engine) -> (ok: bool) {
+	im.CHECKVERSION()
+
+	// 1: create descriptor pool for IMGUI
+	// The size of the pool is very oversize, but it's copied from imgui demo itself.
+	pool_sizes := []vk.DescriptorPoolSize {
+		{.SAMPLER, 1000},
+		{.COMBINED_IMAGE_SAMPLER, 1000},
+		{.SAMPLED_IMAGE, 1000},
+		{.STORAGE_IMAGE, 1000},
+		{.UNIFORM_TEXEL_BUFFER, 1000},
+		{.STORAGE_TEXEL_BUFFER, 1000},
+		{.UNIFORM_BUFFER, 1000},
+		{.STORAGE_BUFFER, 1000},
+		{.UNIFORM_BUFFER_DYNAMIC, 1000},
+		{.STORAGE_BUFFER_DYNAMIC, 1000},
+		{.INPUT_ATTACHMENT, 1000},
+	}
+
+	pool_info := vk.DescriptorPoolCreateInfo {
+		sType         = .DESCRIPTOR_POOL_CREATE_INFO,
+		flags         = {.FREE_DESCRIPTOR_SET},
+		maxSets       = 1000,
+		poolSizeCount = u32(len(pool_sizes)),
+		pPoolSizes    = raw_data(pool_sizes),
+	}
+
+	imgui_pool: vk.DescriptorPool
+	vk_check(vk.CreateDescriptorPool(self.vk_device, &pool_info, nil, &imgui_pool)) or_return
+
+	// This initializes the core structures of imgui
+	im.create_context()
+	defer if !ok {im.destroy_context()}
+
+	// This initializes imgui for GLFW
+	im_glfw.init_for_vulkan(self.window, true) or_return
+	defer if !ok {im_glfw.shutdown()}
+
+	// This initializes imgui for Vulkan
+	init_info := im_vk.Init_Info {
+		api_version = self.vkb.instance.api_version,
+		instance = self.vk_instance,
+		physical_device = self.vk_physical_device,
+		device = self.vk_device,
+		queue = self.graphics_queue,
+		descriptor_pool = imgui_pool,
+		min_image_count = 3,
+		image_count = 3,
+		use_dynamic_rendering = true,
+		pipeline_rendering_create_info = {
+			sType = .PIPELINE_RENDERING_CREATE_INFO,
+			colorAttachmentCount = 1,
+			pColorAttachmentFormats = &self.swapchain_format,
+		},
+		msaa_samples = ._1,
+	}
+
+	im_vk.load_functions(
+		self.vkb.instance.api_version,
+		proc "c" (function_name: cstring, user_data: rawptr) -> vk.ProcVoidFunction {
+			engine := cast(^Engine)user_data
+			return vk.GetInstanceProcAddr(engine.vk_instance, function_name)
+		},
+		self,
+	) or_return
+
+	im_vk.init(&init_info) or_return
+	defer if !ok {im_vk.shutdown()}
+
+	// Remember the LIFO queue, make sure the order of push is correct
+	deletion_queue_push(&self.main_deletion_queue, imgui_pool)
+	deletion_queue_push(&self.main_deletion_queue, im_vk.shutdown)
+	deletion_queue_push(&self.main_deletion_queue, im_glfw.shutdown)
+
+	return true
+}
+
+engine_draw_imgui :: proc(
+	self: ^Engine,
+	cmd: vk.CommandBuffer,
+	target_view: vk.ImageView,
+) -> (
+	ok: bool,
+) {
+	color_attachment := attachment_info(target_view, nil, .COLOR_ATTACHMENT_OPTIMAL)
+	render_info := rendering_info(self.swapchain_extent, &color_attachment, nil)
+
+	vk.CmdBeginRendering(cmd, &render_info)
+
+	im_vk.render_draw_data(im.get_draw_data(), cmd)
+
+	vk.CmdEndRendering(cmd)
+
+	return
 }
