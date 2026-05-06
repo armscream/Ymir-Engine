@@ -127,6 +127,7 @@ init_window :: proc(window_name: string, x: i32, y: i32, width: i32, height: i32
     if !engine_init(&self) {
         log.error("Failed to initialize Vulkan engine")
         destroy_window(self.window)
+        self.window = nil
         return nil
     }
     return self.window
@@ -142,8 +143,8 @@ init_window :: proc(window_name: string, x: i32, y: i32, width: i32, height: i32
 }
 
 poll_should_quit :: proc(escape_key: i32) -> bool {
-    if self.window == nil {
-        return false
+    if self.window == nil || !self.is_initialized {
+        return true
     }
     if is_escape_binding(escape_key) {
         return bool(glfw.WindowShouldClose(self.window))

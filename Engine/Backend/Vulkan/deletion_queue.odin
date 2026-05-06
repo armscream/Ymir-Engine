@@ -41,6 +41,7 @@ Resource :: union {
 
 	// Higher-level custom resources
 	Allocated_Image,
+	Allocated_Buffer,
 }
 
 Deletion_Queue :: struct {
@@ -134,6 +135,8 @@ deletion_queue_flush :: proc(self: ^Deletion_Queue) {
 		// Higher-level custom resources
 		case Allocated_Image:
 			destroy_image(res)
+		case Allocated_Buffer:
+			destroy_buffer(res)
 		}
 	}
 

@@ -7,34 +7,27 @@ struct VSOutput
     float2 uv : TEXCOORD0;
 };
 
-struct Vertex
-{
-    float3 position;
-    float uv_x;
-    float3 normal;
-    float uv_y;
-    float4 color;
-};
-
 struct PushConstants
 {
     float4x4 render_matrix;
-    Vertex *vertex_buffer;
 };
 
 [vk_push_constant]
 PushConstants push_constants;
 
 [shader("vertex")]
-VSOutput main(uint vertex_index: SV_VertexID)
+VSOutput main(
+    [vk_location(0)] float3 in_position,
+    [vk_location(1)] float  in_uv_x,
+    [vk_location(2)] float3 in_normal,
+    [vk_location(3)] float  in_uv_y,
+    [vk_location(4)] float4 in_color
+)
 {
-    Vertex v = push_constants.vertex_buffer[vertex_index];
-
     VSOutput output;
-    output.pos = mul(push_constants.render_matrix, float4(v.position, 1.0));
-    output.color = v.color.xyz;
-    output.uv.x = v.uv_x;
-    output.uv.y = v.uv_y;
-
+    output.pos = mul(push_constants.render_matrix, float4(in_position, 1.0));
+    output.color = in_color.xyz;
+    output.uv.x = in_uv_x;
+    output.uv.y = in_uv_y;
     return output;
 }

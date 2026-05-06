@@ -29,6 +29,26 @@ Pipeline_Builder :: struct {
 	base_pipeline_index:     i32,
 	flags:                   vk.PipelineCreateFlags,
 	allocator:               runtime.Allocator,
+	vertex_binding_descs:    [4]vk.VertexInputBindingDescription,
+	vertex_binding_count:    u32,
+	vertex_attribute_descs:  [16]vk.VertexInputAttributeDescription,
+	vertex_attribute_count:  u32,
+}
+
+pipeline_builder_enable_depth_test :: proc(
+    self: ^Pipeline_Builder,
+    depth_write_enable: bool,
+    op: vk.CompareOp,
+) {
+    self.depth_stencil.depthTestEnable = true
+    self.depth_stencil.depthWriteEnable = b32(depth_write_enable)
+    self.depth_stencil.depthCompareOp = op
+    self.depth_stencil.depthBoundsTestEnable = false
+    self.depth_stencil.stencilTestEnable = false
+    self.depth_stencil.front = {}
+    self.depth_stencil.back = {}
+    self.depth_stencil.minDepthBounds = 0.0
+    self.depth_stencil.maxDepthBounds = 1.0
 }
 
 pipeline_builder_build :: proc(
@@ -56,9 +76,12 @@ pipeline_builder_build :: proc(
 		pAttachments    = &self.color_blend_attachment,
 	}
 
-	// Completely clear `VertexInputStateCreateInfo`, as we have no need for it
 	vertex_input_info := vk.PipelineVertexInputStateCreateInfo {
-		sType = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+		sType                           = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+		vertexBindingDescriptionCount   = self.vertex_binding_count,
+		pVertexBindingDescriptions      = &self.vertex_binding_descs[0],
+		vertexAttributeDescriptionCount = self.vertex_attribute_count,
+		pVertexAttributeDescriptions    = &self.vertex_attribute_descs[0],
 	}
 
 	dynamic_states := [?]vk.DynamicState{.VIEWPORT, .SCISSOR}
@@ -92,10 +115,21 @@ pipeline_builder_build :: proc(
 		basePipelineIndex   = self.base_pipeline_index,
 	}
 
-	vk_check(
-		vk.CreateGraphicsPipelines(device, 0, 1, &pipeline_info, nil, &pipeline),
-		"Failed to create pipeline",
-	) or_return
+	res := vk.CreateGraphicsPipelines(device, 0, 1, &pipeline_info, nil, &pipeline)
+	log.debugf(
+		"vkCreateGraphicsPipelines: result=%v pipeline=0x%x layout=0x%x device=0x%x",
+		res,
+		u64(pipeline),
+		u64(pipeline_info.layout),
+		u64(uintptr(device)),
+	)
+	vk_check(res, "Failed to create pipeline") or_return
+
+	if pipeline == 0 {
+		log.error("vkCreateGraphicsPipelines returned VK_SUCCESS but pipeline handle is VK_NULL_HANDLE")
+		ok = false
+		return
+	}
 
 	return pipeline, true
 }
@@ -116,6 +150,19 @@ pipeline_builder_set_shaders :: proc(
 ) {
     pipeline_builder_add_shader(self, vertex_shader, {.VERTEX})
     pipeline_builder_add_shader(self, fragment_shader, {.FRAGMENT})
+}
+
+pipeline_builder_set_vertex_layout :: proc(
+	self: ^Pipeline_Builder,
+	bindings: []vk.VertexInputBindingDescription,
+	attributes: []vk.VertexInputAttributeDescription,
+) {
+	assert(len(bindings) <= len(self.vertex_binding_descs))
+	assert(len(attributes) <= len(self.vertex_attribute_descs))
+	copy(self.vertex_binding_descs[:], bindings)
+	self.vertex_binding_count = u32(len(bindings))
+	copy(self.vertex_attribute_descs[:], attributes)
+	self.vertex_attribute_count = u32(len(attributes))
 }
 
 pipeline_builder_set_input_topology :: proc(

@@ -7,7 +7,7 @@ A mesh optimization library that reduces GPU vertex processing and memory bandwi
 ## Files
 
 | File | Description |
-|---|---|
+
 | `meshoptimizer.odin` | Odin foreign bindings (`package meshoptimizer`) |
 | `meshoptimizer_windows_x86_64.lib` | Pre-compiled static library (MSVC x64) |
 | `src/` | meshoptimizer v1.1 C++ source files (for rebuilding on other platforms) |

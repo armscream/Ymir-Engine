@@ -78,7 +78,7 @@ engine_draw :: proc(self: ^Engine) -> (ok: bool) {
 	engine_draw_background(self, cmd) or_return
 
 	transition_image(cmd, self.draw_image.image, .GENERAL, .COLOR_ATTACHMENT_OPTIMAL)
-
+    transition_image(cmd, self.depth_image.image, .UNDEFINED, .DEPTH_ATTACHMENT_OPTIMAL) 
 	// Draw the triangle
 	engine_draw_geometry(self, cmd) or_return
 

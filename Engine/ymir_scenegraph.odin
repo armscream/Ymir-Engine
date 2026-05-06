@@ -2,6 +2,7 @@ package ye
 
 import "core:math"
 import "core:fmt"
+import yemath "/math"
 
 // Gonna grab level and layer data to this file and then construct efficient data structures for 
 // rendering
@@ -36,9 +37,9 @@ SceneNode :: struct {
 }
 
 Transform :: struct {
-    position: Vec3,
+    position: yemath.Vec3,
     rotation: quaternion128, // quaternion for rotation to avoid gimbal lock
-    scale: Vec3,
+    scale: yemath.Vec3,
 }
 
 Renderable :: struct {
@@ -52,13 +53,13 @@ Mesh :: struct {
 }
 
 Vertex :: struct {
-    position: Vec3,
-    normal: Vec3,
-    uv: Vec2,
+    position: yemath.Vec3,
+    normal: yemath.Vec3,
+    uv: yemath.Vec2,
 }
 
 Material :: struct {
-    albedo: Vec3,
+    albedo: yemath.Vec3,
     metallic: f32,
     roughness: f32,
     normal: f32,
@@ -102,7 +103,7 @@ UpdateSceneGraphNode :: proc(node: ^SceneNode, parent_world_transform: Transform
 }
 
 CombineTransforms :: proc(local: Transform, parent: Transform) -> Transform {
-    new_position := parent.position + RotateVector(local.position, parent.rotation)
+    new_position := parent.position + yemath.RotateVector(local.position, parent.rotation)
     new_rotation := parent.rotation * local.rotation
     new_scale := parent.scale * local.scale
     return Transform{new_position, new_rotation, new_scale}
