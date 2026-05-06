@@ -83,11 +83,8 @@ Engine :: struct {
 	// Pipeline
 	gradient_pipeline:            vk.Pipeline,
 	gradient_pipeline_layout:     vk.PipelineLayout,
-	triangle_pipeline_layout:     vk.PipelineLayout,
-	triangle_pipeline:            vk.Pipeline,
 	mesh_pipeline_layout:         vk.PipelineLayout,
 	mesh_pipeline:                vk.Pipeline,
-	rectangle:                    GPU_Mesh_Buffers,
 
 	// Effects
 	background_effects:           [Compute_Effect_Kind]Compute_Effect,
@@ -690,7 +687,6 @@ engine_init_pipelines :: proc(self: ^Engine) -> (ok: bool) {
 	// Compute pipelines
 	engine_init_background_pipelines(self) or_return
 	// Graphics pipelines
-	engine_init_triangle_pipeline(self) or_return
 	if !engine_init_mesh_pipeline(self) {
 		log.warn("Mesh pipeline initialization failed; continuing without mesh draw")
 	}
@@ -893,63 +889,6 @@ engine_draw_imgui :: proc(
 	return
 }
 
-engine_init_triangle_pipeline :: proc(self: ^Engine) -> (ok: bool) {
-	triangle_frag_shader := create_shader_module(
-		self.vk_device,
-		#load("/shaders/compiled/colored_triangle.frag.spv"),
-	) or_return
-	defer vk.DestroyShaderModule(self.vk_device, triangle_frag_shader, nil)
-
-	triangle_vert_shader := create_shader_module(
-		self.vk_device,
-		#load("/shaders/compiled/colored_triangle.vert.spv"),
-	) or_return
-	defer vk.DestroyShaderModule(self.vk_device, triangle_vert_shader, nil)
-
-	// Build the pipeline layout that controls the inputs/outputs of the shader, we are not
-	// using descriptor sets or other systems yet, so no need to use anything other than empty
-	// default
-	pipeline_layout_info := pipeline_layout_create_info()
-	vk_check(
-		vk.CreatePipelineLayout(
-			self.vk_device,
-			&pipeline_layout_info,
-			nil,
-			&self.triangle_pipeline_layout,
-		),
-	) or_return
-	deletion_queue_push(&self.main_deletion_queue, self.triangle_pipeline_layout)
-
-	builder := pipeline_builder_create_default()
-
-	// Use the triangle layout we created
-	builder.pipeline_layout = self.triangle_pipeline_layout
-	// Add the vertex and pixel shaders to the pipeline
-	pipeline_builder_set_shaders(&builder, triangle_vert_shader, triangle_frag_shader)
-	// It will draw triangles
-	pipeline_builder_set_input_topology(&builder, .TRIANGLE_LIST)
-	// Filled triangles
-	pipeline_builder_set_polygon_mode(&builder, .FILL)
-	// No backface culling
-	pipeline_builder_set_cull_mode(&builder, vk.CullModeFlags_NONE, .CLOCKWISE)
-	// No multisampling
-	pipeline_builder_set_multisampling_none(&builder)
-	// No blending
-	pipeline_builder_disable_blending(&builder)
-	// pipeline_builder_disable_depth_test(&builder)
-	pipeline_builder_enable_depth_test(&builder, true, .GREATER_OR_EQUAL)
-
-	// Connect the image format we will draw into, from draw image
-	pipeline_builder_set_color_attachment_format(&builder, self.draw_image.image_format)
-	pipeline_builder_set_depth_attachment_format(&builder, self.depth_image.image_format)
-
-	// Finally build the pipeline
-	self.triangle_pipeline = pipeline_builder_build(&builder, self.vk_device) or_return
-	deletion_queue_push(&self.main_deletion_queue, self.triangle_pipeline)
-
-	return true
-}
-
 engine_draw_geometry :: proc(self: ^Engine, cmd: vk.CommandBuffer) -> (ok: bool) {
 	// Begin a render pass connected to our draw image
 	color_attachment := attachment_info(self.draw_image.image_view, nil, .COLOR_ATTACHMENT_OPTIMAL)
@@ -962,48 +901,27 @@ engine_draw_geometry :: proc(self: ^Engine, cmd: vk.CommandBuffer) -> (ok: bool)
 	render_info := rendering_info(self.draw_extent, &color_attachment, &depth_attachment)
 	vk.CmdBeginRendering(cmd, &render_info)
 
-	vk.CmdBindPipeline(cmd, .GRAPHICS, self.triangle_pipeline)
-
-	// Set dynamic viewport and scissor
-	viewport := vk.Viewport {
-		x        = 0,
-		y        = 0,
-		width    = f32(self.draw_extent.width),
-		height   = f32(self.draw_extent.height),
-		minDepth = 0.0,
-		maxDepth = 1.0,
-	}
-
-	vk.CmdSetViewport(cmd, 0, 1, &viewport)
-
-	scissor := vk.Rect2D {
-		offset = {x = 0, y = 0},
-		extent = {width = self.draw_extent.width, height = self.draw_extent.height},
-	}
-
-	vk.CmdSetScissor(cmd, 0, 1, &scissor)
-
-	// Launch a draw command to draw 3 vertices
-	vk.CmdDraw(cmd, 3, 1, 0, 0)
-
 	if self.mesh_pipeline != 0 && self.mesh_pipeline_layout != 0 {
 		vk.CmdBindPipeline(cmd, .GRAPHICS, self.mesh_pipeline)
 
-		rect_push := GPU_Draw_Push_Constants {
-			world_matrix = la.MATRIX4F32_IDENTITY,
+		// Set dynamic viewport and scissor after binding a graphics pipeline
+		viewport := vk.Viewport {
+			x        = 0,
+			y        = 0,
+			width    = f32(self.draw_extent.width),
+			height   = f32(self.draw_extent.height),
+			minDepth = 0.0,
+			maxDepth = 1.0,
 		}
-		rect_offsets := [1]vk.DeviceSize{0}
-		vk.CmdBindVertexBuffers(cmd, 0, 1, &self.rectangle.vertex_buffer.buffer, &rect_offsets[0])
-		vk.CmdPushConstants(
-			cmd,
-			self.mesh_pipeline_layout,
-			{.VERTEX},
-			0,
-			size_of(GPU_Draw_Push_Constants),
-			&rect_push,
-		)
-		vk.CmdBindIndexBuffer(cmd, self.rectangle.index_buffer.buffer, 0, .UINT32)
-		vk.CmdDrawIndexed(cmd, 6, 1, 0, 0, 0)
+
+		vk.CmdSetViewport(cmd, 0, 1, &viewport)
+
+		scissor := vk.Rect2D {
+			offset = {x = 0, y = 0},
+			extent = {width = self.draw_extent.width, height = self.draw_extent.height},
+		}
+
+		vk.CmdSetScissor(cmd, 0, 1, &scissor)
 	}
 
 	// Create view matrix - place camera at positive Z looking at origin
@@ -1170,25 +1088,6 @@ engine_init_default_data :: proc(self: ^Engine) -> (ok: bool) {
 	defer if !ok {
 		destroy_mesh_assets(&self.test_meshes)
 	}
-    // odinfmt: disable
-    rect_vertices := [4]Vertex {
-        { position = {0.5,-0.5, 0},  color = { 0,0, 0.0, 1.0 }},
-        { position = {0.5,0.5, 0},   color = { 0.5, 0.5, 0.5 ,1.0 }},
-        { position = {-0.5,-0.5, 0}, color = { 1,0, 0.0, 1.0 }},
-        { position = {-0.5,0.5, 0},  color = { 0.0, 1.0, 0.0, 1.0 }},
-    }
-
-    rect_indices := [6]u32 {
-        0, 1, 2,
-        2, 1, 3,
-    }
-    // odinfmt: enable
-
-	self.rectangle = upload_mesh(self, rect_indices[:], rect_vertices[:]) or_return
-
-	// Delete the rectangle data on engine shutdown
-	deletion_queue_push(&self.main_deletion_queue, self.rectangle.index_buffer)
-	deletion_queue_push(&self.main_deletion_queue, self.rectangle.vertex_buffer)
 
 	return true
 }
