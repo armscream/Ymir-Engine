@@ -77,8 +77,13 @@ engine_draw :: proc(self: ^Engine) -> (ok: bool) {
 	// Clear the image
 	engine_draw_background(self, cmd) or_return
 
+	transition_image(cmd, self.draw_image.image, .GENERAL, .COLOR_ATTACHMENT_OPTIMAL)
+
+	// Draw the triangle
+	engine_draw_geometry(self, cmd) or_return
+
 	// Transition the draw image and the swapchain image into their correct transfer layouts
-	transition_image(cmd, self.draw_image.image, .GENERAL, .TRANSFER_SRC_OPTIMAL)
+	transition_image(cmd, self.draw_image.image, .COLOR_ATTACHMENT_OPTIMAL, .TRANSFER_SRC_OPTIMAL)
 	transition_image(
 		cmd,
 		self.swapchain_images[frame.swapchain_image_index],
