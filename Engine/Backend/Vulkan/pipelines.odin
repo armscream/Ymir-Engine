@@ -35,6 +35,28 @@ Pipeline_Builder :: struct {
 	vertex_attribute_count:  u32,
 }
 
+pipeline_builder_enable_blending_additive :: proc(self: ^Pipeline_Builder) {
+    self.color_blend_attachment.colorWriteMask = {.R, .G, .B, .A}
+    self.color_blend_attachment.blendEnable = true
+    self.color_blend_attachment.srcColorBlendFactor = .SRC_ALPHA
+    self.color_blend_attachment.dstColorBlendFactor = .ONE
+    self.color_blend_attachment.colorBlendOp = .ADD
+    self.color_blend_attachment.srcAlphaBlendFactor = .ONE
+    self.color_blend_attachment.dstAlphaBlendFactor = .ZERO
+    self.color_blend_attachment.alphaBlendOp = .ADD
+}
+
+pipeline_builder_enable_blending_alphablend :: proc(self: ^Pipeline_Builder) {
+    self.color_blend_attachment.colorWriteMask = {.R, .G, .B, .A}
+    self.color_blend_attachment.blendEnable = true
+    self.color_blend_attachment.srcColorBlendFactor = .SRC_ALPHA
+    self.color_blend_attachment.dstColorBlendFactor = .ONE_MINUS_SRC_ALPHA
+    self.color_blend_attachment.colorBlendOp = .ADD
+    self.color_blend_attachment.srcAlphaBlendFactor = .ONE
+    self.color_blend_attachment.dstAlphaBlendFactor = .ZERO
+    self.color_blend_attachment.alphaBlendOp = .ADD
+}
+
 pipeline_builder_enable_depth_test :: proc(
     self: ^Pipeline_Builder,
     depth_write_enable: bool,

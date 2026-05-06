@@ -166,6 +166,12 @@ get_window_state :: proc(x: ^i32, y: ^i32, width: ^i32, height: ^i32, fullscreen
     return true
 }
 
+get_monitor_resolution :: proc() -> (u32, u32) {
+    mode := glfw.GetVideoMode(glfw.GetPrimaryMonitor())
+    ensure(mode != nil)
+    return u32(mode.width), u32(mode.height)
+}
+
 // -----------------------------------------------------------------------------
 // Callbacks
 // -----------------------------------------------------------------------------

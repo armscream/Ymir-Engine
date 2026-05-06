@@ -19,9 +19,8 @@ PushConstants push_constants;
 VSOutput main(
     [vk_location(0)] float3 in_position,
     [vk_location(1)] float  in_uv_x,
-    [vk_location(2)] float3 in_normal,
-    [vk_location(3)] float  in_uv_y,
-    [vk_location(4)] float4 in_color
+    [vk_location(2)] float  in_uv_y,
+    [vk_location(3)] float4 in_color
 )
 {
     VSOutput output;

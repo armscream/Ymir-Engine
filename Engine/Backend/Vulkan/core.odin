@@ -12,9 +12,6 @@ import glfw "vendor:glfw"
 import vk "vendor:vulkan"
 
 // Local packages
-import im "../../Libs/imgui"
-import im_glfw "../../Libs/imgui/imgui_impl_glfw"
-import im_vk "../../Libs/imgui/imgui_impl_vulkan"
 import "../../Libs/vma"
 
 Allocated_Image :: struct {
@@ -68,47 +65,6 @@ vk_check :: #force_inline proc(
 	return false
 }
 
-engine_ui_definition :: proc(self: ^Engine) {
-	im_glfw.new_frame()
-	im_vk.new_frame()
-	im.new_frame()
-
-	if im.begin("Background", nil, {.Always_Auto_Resize}) {
-		selected := &self.background_effects[self.current_background_effect]
-
-		im.text("Selected effect: %s", selected.name)
-
-		@(static) current_background_effect: i32
-		current_background_effect = i32(self.current_background_effect)
-
-		// If the combo is opened and an item is selected, update the current effect
-		if im.begin_combo("Effect", selected.name) {
-			for effect, i in self.background_effects {
-				is_selected := i32(i) == current_background_effect
-				if im.selectable(effect.name, is_selected) {
-					current_background_effect = i32(i)
-					self.current_background_effect = Compute_Effect_Kind(current_background_effect)
-				}
-
-				// Set initial focus when the currently selected item becomes visible
-				if is_selected {
-					im.set_item_default_focus()
-				}
-			}
-			im.end_combo()
-		}
-
-		im.input_float4("data1", &selected.data.data1)
-		im.input_float4("data2", &selected.data.data2)
-		im.input_float4("data3", &selected.data.data3)
-		im.input_float4("data4", &selected.data.data4)
-
-	}
-	im.end()
-
-	im.render()
-}
-
 // Run main loop.
 @(require_results)
 engine_run :: proc(runtime: rawptr) -> (ok: bool) {
@@ -131,11 +87,6 @@ engine_run :: proc(runtime: rawptr) -> (ok: bool) {
 	log.info("Entering main loop...")
 
 	loop: for !glfw.WindowShouldClose(self.window) {
-
-		// Do not draw if we are minimized
-		if glfw.GetWindowAttrib(self.window, glfw.ICONIFIED) == 0 {
-			engine_acquire_next_image(&self) or_return
-		}
 
 		// Advance timer and set for FPS update
 		timer_tick(&t)
@@ -191,6 +142,25 @@ engine_acquire_next_image :: proc(self: ^Engine) -> (ok: bool) {
 		),
 	) or_return
 
+	return true
+}
+
+engine_immediate_submit :: proc(
+	self: ^Engine,
+	data: $T,
+	fn: proc(engine: ^Engine, cmd: vk.CommandBuffer, data: T),
+) -> (ok: bool) {
+	vk_check(vk.ResetFences(self.vk_device, 1, &self.imm_fence)) or_return
+	vk_check(vk.ResetCommandBuffer(self.imm_command_buffer, {})) or_return
+	cmd := self.imm_command_buffer
+	cmd_begin_info := command_buffer_begin_info({.ONE_TIME_SUBMIT})
+	vk_check(vk.BeginCommandBuffer(cmd, &cmd_begin_info)) or_return
+	fn(self, cmd, data)
+	vk_check(vk.EndCommandBuffer(cmd)) or_return
+	cmd_info := command_buffer_submit_info(cmd)
+	submit_info := submit_info(&cmd_info, nil, nil)
+	vk_check(vk.QueueSubmit2(self.graphics_queue, 1, &submit_info, self.imm_fence)) or_return
+	vk_check(vk.WaitForFences(self.vk_device, 1, &self.imm_fence, true, 9999999999)) or_return
 	return true
 }
 
