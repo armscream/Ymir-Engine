@@ -14,6 +14,8 @@ import vk "vendor:vulkan"
 // Local packages
 import "../../Libs/vma"
 
+USE_QUANTIZED_VERTICES :: #config(USE_QUANTIZED_VERTICES, false)
+
 Allocated_Buffer :: struct {
 	buffer:     vk.Buffer,
 	info:       vma.Allocation_Info,
@@ -29,6 +31,14 @@ Vertex :: struct {
 	color:    la.Vector4f32,
 }
 
+Vertex_Quantized :: struct {
+	position: [4]f16,
+	uv_x:     f16,
+	normal:   [4]f16,
+	uv_y:     f16,
+	color:    [4]u8,
+}
+
 // Holds the resources needed for a mesh
 GPU_Mesh_Buffers :: struct {
 	index_buffer:          Allocated_Buffer,
@@ -39,6 +49,8 @@ GPU_Mesh_Buffers :: struct {
 // Push constants for our mesh object draws
 GPU_Draw_Push_Constants :: struct {
 	world_matrix:  la.Matrix4f32,
+	uv_remap:      la.Vector4f32,
+	atlas_info:    la.Vector4f32,
 	vertex_buffer: vk.DeviceAddress,
 }
 
@@ -176,12 +188,12 @@ destroy_buffer :: proc(self: Allocated_Buffer) {
 upload_mesh :: proc(
 	self: ^Engine,
 	indices: []u32,
-	vertices: []Vertex,
+	vertices: []$T,
 ) -> (
 	new_surface: GPU_Mesh_Buffers,
 	ok: bool,
 ) {
-	vertex_buffer_size := vk.DeviceSize(len(vertices) * size_of(Vertex))
+	vertex_buffer_size := vk.DeviceSize(len(vertices) * size_of(T))
 	index_buffer_size := vk.DeviceSize(len(indices) * size_of(u32))
 
 	// Create vertex buffer

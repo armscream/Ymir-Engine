@@ -15,6 +15,8 @@ struct GLTFMaterialData
 {
     float4 color_factors;
     float4 metal_rough_factors;
+    float4 uv_remap;
+    float4 atlas_info;
 };
 [[vk::binding(0, 1)]]
 ParameterBlock<GLTFMaterialData> material_data;

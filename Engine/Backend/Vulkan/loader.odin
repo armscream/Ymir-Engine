@@ -12,6 +12,17 @@ Material :: struct {
 	data: Material_Instance,
 }
 
+pack_unorm8 :: #force_inline proc(v: f32) -> u8 {
+	vv := v
+	if vv < 0 {
+		vv = 0
+	}
+	if vv > 1 {
+		vv = 1
+	}
+	return u8(vv * 255.0 + 0.5)
+}
+
 Geo_Surface :: struct {
 	start_index:    u32,
 	count:          u32,
@@ -327,7 +338,28 @@ load_gltf_meshes :: proc(
 		}
 
 		// Upload mesh data to GPU
-		new_mesh.mesh_buffers = upload_mesh(engine, indices_temp[:], vertices_temp[:]) or_return
+		if USE_QUANTIZED_VERTICES {
+			qvertices := make([]Vertex_Quantized, len(vertices_temp), ta)
+			for i in 0 ..< len(vertices_temp) {
+				v := vertices_temp[i]
+				qvertices[i] = {
+					position = {f16(v.position.x), f16(v.position.y), f16(v.position.z), f16(1)},
+					uv_x     = f16(v.uv_x),
+					normal   = {f16(v.normal.x), f16(v.normal.y), f16(v.normal.z), f16(0)},
+					uv_y     = f16(v.uv_y),
+					color    = {
+						pack_unorm8(v.color.x),
+						pack_unorm8(v.color.y),
+						pack_unorm8(v.color.z),
+						pack_unorm8(v.color.w),
+					},
+				}
+			}
+
+			new_mesh.mesh_buffers = upload_mesh(engine, indices_temp[:], qvertices) or_return
+		} else {
+			new_mesh.mesh_buffers = upload_mesh(engine, indices_temp[:], vertices_temp[:]) or_return
+		}
 	}
 
 	if len(meshes) == 0 {

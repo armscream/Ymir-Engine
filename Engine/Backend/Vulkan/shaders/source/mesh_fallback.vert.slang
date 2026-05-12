@@ -14,6 +14,8 @@ struct VSOutput
 struct PushConstants
 {
     float4x4 render_matrix;
+    float4 uv_remap;
+    float4 atlas_info;
     uint2 vertex_buffer_pad;
 };
 
@@ -34,7 +36,8 @@ VSOutput main(
     output.pos = mul(scene_data.view_proj, mul(push_constants.render_matrix, position));
     output.outNormal = (mul(push_constants.render_matrix, float4(in_normal, 0.0))).xyz;
     output.outColor = in_color.xyz * material_data.color_factors.xyz;
-    output.outUV = float2(in_uv_x, in_uv_y);
+    float2 base_uv = float2(in_uv_x, in_uv_y);
+    output.outUV = push_constants.uv_remap.xy + base_uv * push_constants.uv_remap.zw;
 
     return output;
 }

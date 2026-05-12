@@ -18,17 +18,27 @@ Material_Pipeline :: struct {
 	layout:   vk.PipelineLayout,
 }
 
+Material_Source_Metadata :: struct {
+	color_extent:       [2]i32,
+	metal_rough_extent: [2]i32,
+	color_sampler:      vk.Sampler,
+	metal_rough_sampler: vk.Sampler,
+}
+
 Material_Instance :: struct {
 	pipeline:     ^Material_Pipeline,
 	material_set: vk.DescriptorSet,
 	pass_type:    Material_Pass,
+	source:       Material_Source_Metadata,
 }
 
 Metallic_Roughness_Constants :: struct {
 	color_factors:       la.Vector4f32,
 	metal_rough_factors: la.Vector4f32,
+	uv_remap:            la.Vector4f32,
+	atlas_info:          la.Vector4f32,
 	// Padding, we need it anyway for uniform buffers
-	extra:               [14]la.Vector4f32,
+	extra:               [12]la.Vector4f32,
 }
 
 Metallic_Roughness_Resources :: struct {
@@ -217,6 +227,13 @@ metallic_roughness_write :: proc(
 	) or_return
 
 	descriptor_writer_update_set(&self.writer, material.material_set)
+
+	material.source = {
+		color_extent       = {i32(resources.color_image.image_extent.width), i32(resources.color_image.image_extent.height)},
+		metal_rough_extent = {i32(resources.metal_rough_image.image_extent.width), i32(resources.metal_rough_image.image_extent.height)},
+		color_sampler      = resources.color_sampler,
+		metal_rough_sampler = resources.metal_rough_sampler,
+	}
 
 	return material, true
 }

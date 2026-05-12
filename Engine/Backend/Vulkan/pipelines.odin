@@ -338,41 +338,80 @@ pipeline_builder_set_stencil_attachment_format :: proc(
 
 pipeline_builder_set_vertex_input_for_vertex_struct :: proc(self: ^Pipeline_Builder) {
 	self.vertex_input_enabled = true
-	self.vertex_bindings[0] = {
-		binding   = 0,
-		stride    = size_of(Vertex),
-		inputRate = .VERTEX,
-	}
+	if USE_QUANTIZED_VERTICES {
+		self.vertex_bindings[0] = {
+			binding   = 0,
+			stride    = size_of(Vertex_Quantized),
+			inputRate = .VERTEX,
+		}
 
-	self.vertex_attributes[0] = {
-		location = 0,
-		binding  = 0,
-		format   = .R32G32B32_SFLOAT,
-		offset   = u32(offset_of(Vertex, position)),
-	}
-	self.vertex_attributes[1] = {
-		location = 1,
-		binding  = 0,
-		format   = .R32_SFLOAT,
-		offset   = u32(offset_of(Vertex, uv_x)),
-	}
-	self.vertex_attributes[2] = {
-		location = 2,
-		binding  = 0,
-		format   = .R32G32B32_SFLOAT,
-		offset   = u32(offset_of(Vertex, normal)),
-	}
-	self.vertex_attributes[3] = {
-		location = 3,
-		binding  = 0,
-		format   = .R32_SFLOAT,
-		offset   = u32(offset_of(Vertex, uv_y)),
-	}
-	self.vertex_attributes[4] = {
-		location = 4,
-		binding  = 0,
-		format   = .R32G32B32A32_SFLOAT,
-		offset   = u32(offset_of(Vertex, color)),
+		self.vertex_attributes[0] = {
+			location = 0,
+			binding  = 0,
+			format   = .R16G16B16A16_SFLOAT,
+			offset   = u32(offset_of(Vertex_Quantized, position)),
+		}
+		self.vertex_attributes[1] = {
+			location = 1,
+			binding  = 0,
+			format   = .R16_SFLOAT,
+			offset   = u32(offset_of(Vertex_Quantized, uv_x)),
+		}
+		self.vertex_attributes[2] = {
+			location = 2,
+			binding  = 0,
+			format   = .R16G16B16A16_SFLOAT,
+			offset   = u32(offset_of(Vertex_Quantized, normal)),
+		}
+		self.vertex_attributes[3] = {
+			location = 3,
+			binding  = 0,
+			format   = .R16_SFLOAT,
+			offset   = u32(offset_of(Vertex_Quantized, uv_y)),
+		}
+		self.vertex_attributes[4] = {
+			location = 4,
+			binding  = 0,
+			format   = .R8G8B8A8_UNORM,
+			offset   = u32(offset_of(Vertex_Quantized, color)),
+		}
+	} else {
+		self.vertex_bindings[0] = {
+			binding   = 0,
+			stride    = size_of(Vertex),
+			inputRate = .VERTEX,
+		}
+
+		self.vertex_attributes[0] = {
+			location = 0,
+			binding  = 0,
+			format   = .R32G32B32_SFLOAT,
+			offset   = u32(offset_of(Vertex, position)),
+		}
+		self.vertex_attributes[1] = {
+			location = 1,
+			binding  = 0,
+			format   = .R32_SFLOAT,
+			offset   = u32(offset_of(Vertex, uv_x)),
+		}
+		self.vertex_attributes[2] = {
+			location = 2,
+			binding  = 0,
+			format   = .R32G32B32_SFLOAT,
+			offset   = u32(offset_of(Vertex, normal)),
+		}
+		self.vertex_attributes[3] = {
+			location = 3,
+			binding  = 0,
+			format   = .R32_SFLOAT,
+			offset   = u32(offset_of(Vertex, uv_y)),
+		}
+		self.vertex_attributes[4] = {
+			location = 4,
+			binding  = 0,
+			format   = .R32G32B32A32_SFLOAT,
+			offset   = u32(offset_of(Vertex, color)),
+		}
 	}
 
 	self.vertex_attribute_count = 5

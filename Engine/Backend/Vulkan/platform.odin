@@ -189,7 +189,7 @@ save_level_to_json :: proc(file_path: string) -> bool {
         log.warn("save_level_to_json: Vulkan backend is not initialized")
         return false
     }
-    return save_scene_graph(&self, file_path)
+    return scene_save_to_file(&self, file_path)
 }
 
 get_monitor_resolution :: proc() -> (u32, u32) {

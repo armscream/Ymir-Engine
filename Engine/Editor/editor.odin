@@ -2,6 +2,7 @@ package editor
 
 import im "../Libs/imgui"
 import "core:fmt"
+import "core:log"
 import "core:os"
 import "core:strings"
 import vk "../Backend/Vulkan"
@@ -30,17 +31,15 @@ Runtime_Game_Config_View :: struct {
 	levels:           []string,
 }
 
-Hierarchy_Draw_Content_Proc :: #type proc(user_data: rawptr)
 Level_Load_Proc :: #type proc(file_path: string) -> bool
 Level_Save_Proc :: #type proc(file_path: string) -> bool
 
 Editor_UI_Params :: struct {
-	display_size:            im.Vec2,
-	runtime_config:          ^Runtime_Game_Config_View,
-	draw_hierarchy_content:  Hierarchy_Draw_Content_Proc,
-	hierarchy_user_data:     rawptr,
-	load_level:              Level_Load_Proc,
-	save_level:              Level_Save_Proc,
+	display_size:   im.Vec2,
+	runtime_config: ^Runtime_Game_Config_View,
+	scene:          ^vk.Scene,
+	load_level:     Level_Load_Proc,
+	save_level:     Level_Save_Proc,
 }
 
 @(private = "file")
@@ -142,6 +141,61 @@ draw_dir_node :: proc(path: string, name: string) {
 	}
 }
 
+@(private = "file")
+render_scene_tree_ui :: proc(scene: ^vk.Scene, #any_int node: i32, selected_node: ^i32) -> i32 {
+	name := vk.scene_get_node_name(scene, node)
+	label := len(name) == 0 ? "NO NODE" : name
+	is_leaf := scene.hierarchy[node].first_child < 0
+	flags: im.Tree_Node_Flags = is_leaf ? {.Leaf, .Bullet} : {}
+
+	if node == selected_node^ {
+		flags += {.Selected}
+	}
+
+	// Make the node span the entire width
+	flags += {.Span_Full_Width, .Frame_Padding}
+
+	is_opened := im.tree_node_ex_ptr(&scene.hierarchy[node], flags, "%s", cstring(raw_data(label)))
+
+	// Check for clicks in the entire row area
+	was_clicked := im.is_item_clicked()
+
+	im.push_id_int(node)
+	{
+		if was_clicked {
+			log.debugf("Selected node: %d (%s)", node, label)
+			selected_node^ = node
+		}
+
+		if is_opened {
+			for ch := scene.hierarchy[node].first_child;
+			    ch != -1;
+			    ch = scene.hierarchy[ch].next_sibling {
+				if sub_node := render_scene_tree_ui(scene, ch, selected_node); sub_node > -1 {
+					selected_node^ = sub_node
+				}
+			}
+			im.tree_pop()
+		}
+	}
+	im.pop_id()
+
+	return selected_node^
+}
+
+@(private = "file")
+draw_hierarchy_content_ui :: proc(scene: ^vk.Scene) {
+	if scene == nil {
+		return
+	}
+	@(static) selected_node: i32 = -1
+	for &hierarchy, i in scene.hierarchy {
+		if hierarchy.parent == -1 {
+			render_scene_tree_ui(scene, i, &selected_node)
+		}
+	}
+}
+
 runtime_find_current_level_index :: proc(cfg: ^Runtime_Game_Config_View) -> i32 {
 	if cfg == nil {
 		return -1
@@ -166,8 +220,19 @@ editor_draw_ui :: proc(params: Editor_UI_Params) {
 	im.set_next_window_size({300, hierarchy_h})
 	hierarchy_open := im.begin("Hierarchy", nil, {.No_Focus_On_Appearing, .No_Resize})
 	if hierarchy_open {
-		if params.draw_hierarchy_content != nil {
-			params.draw_hierarchy_content(params.hierarchy_user_data)
+		if params.scene != nil {
+			draw_hierarchy_content_ui(params.scene)
+
+			im.separator()
+			if params.scene.atlas_manifest.enabled {
+				im.text("Atlas: enabled")
+			} else {
+				im.text("Atlas: disabled")
+			}
+			im.text("Atlas pages: %d", len(params.scene.atlas_manifest.pages))
+			im.text("Atlas mappings: %d", len(params.scene.atlas_manifest.mappings))
+			im.text("Atlas max size: %d", params.scene.atlas_manifest.settings.max_page_size)
+			im.text("Atlas max pages: %d", params.scene.atlas_manifest.settings.max_pages)
 		}
 
 		im.separator()
@@ -256,12 +321,11 @@ editor_draw_ui :: proc(params: Editor_UI_Params) {
 @(private = "file")
 draw_ui_from_vulkan_hook :: proc(params: vk.Editor_Draw_UI_Params) {
 	editor_draw_ui(Editor_UI_Params{
-		display_size           = params.display_size,
-		runtime_config         = cast(^Runtime_Game_Config_View)params.runtime_config,
-		draw_hierarchy_content = params.draw_hierarchy_content,
-		hierarchy_user_data    = params.hierarchy_user_data,
-		load_level             = params.load_level,
-		save_level             = params.save_level,
+		display_size   = params.display_size,
+		runtime_config = cast(^Runtime_Game_Config_View)params.runtime_config,
+		scene          = params.scene,
+		load_level     = params.load_level,
+		save_level     = params.save_level,
 	})
 }
 
