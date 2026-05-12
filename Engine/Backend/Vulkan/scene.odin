@@ -11,6 +11,8 @@ import "core:os"
 import "core:strings"
 
 // Vendor
+
+import asset_manager "../asset_manager/asset_manager"
 import vk "vendor:vulkan"
 
 // Define sentinel values for indicating invalid node
@@ -833,12 +835,49 @@ scene_bake_atlas_pages_gpu :: proc(engine: ^Engine, scene: ^Scene) {
 	}
 
 	reserve(&scene.atlas_pages, len(scene.atlas_manifest.pages))
-	for _ in scene.atlas_manifest.pages {
-		append(&scene.atlas_pages, Allocated_Image{})
+
+	// For each atlas page, gather inputs and bake
+	for page_idx, page in scene.atlas_manifest.pages {
+		bake_inputs := make([]asset_manager.Atlas_Bake_Input, 0, context.temp_allocator)
+		for mapping in scene.atlas_manifest.mappings {
+			if mapping.atlas_page == page_idx {
+				// Find the material's source texture path
+				material_idx := int(mapping.material)
+				if material_idx < 0 || material_idx >= len(scene.materials) {
+					continue
+				}
+				color_path := scene.materials[material_idx].source.path
+				// Compute destination rect in atlas
+				uv_offset := mapping.uv_offset
+				uv_scale := mapping.uv_scale
+				dest_x := int(uv_offset[0] * f32(page.width))
+				dest_y := int(uv_offset[1] * f32(page.height))
+				dest_width := int(uv_scale[0] * f32(page.width))
+				dest_height := int(uv_scale[1] * f32(page.height))
+				append(&bake_inputs, asset_manager.Atlas_Bake_Input{
+					color_path = color_path,
+					dest_x = dest_x,
+					dest_y = dest_y,
+					dest_width = dest_width,
+					dest_height = dest_height,
+				})
+			}
+		}
+		pixels, ok := asset_manager.bake_atlas_page(bake_inputs, page.width, page.height, context.temp_allocator)
+		if !ok || pixels == nil {
+			log.errorf("scene_bake_atlas_pages_gpu: failed to bake atlas page %d", page_idx)
+			append(&scene.atlas_pages, Allocated_Image{})
+			continue
+		}
+		// Upload to GPU (replace with your actual upload logic)
+		image := vk.create_image_from_pixels(pixels, page.width, page.height)
+		append(&scene.atlas_pages, image)
+		// Free CPU pixels if needed
+		delete(pixels, context.temp_allocator)
 	}
 
 	log.infof(
-		"scene_bake_atlas_pages_gpu: placeholder baked %d atlas pages",
+		"scene_bake_atlas_pages_gpu: baked %d atlas pages",
 		len(scene.atlas_pages),
 	)
 }
