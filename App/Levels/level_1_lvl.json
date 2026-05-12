@@ -1,1 +1,29 @@
-{"name":"level_1"}
+{
+	"name": "scene",
+	"nodes": [
+		{
+			"name": "Suzanne",
+			"mesh": "Suzanne",
+			"parent": -1,
+			"material": 0,
+			"position": [0.0, 0.0, 0.0],
+			"scale": [1.0, 1.0, 1.0]
+		},
+		{
+			"name": "Cube_Left",
+			"mesh": "Cube",
+			"parent": -1,
+			"material": 0,
+			"position": [-2.0, 1.0, 0.0],
+			"scale": [0.2, 0.2, 0.2]
+		},
+		{
+			"name": "Cube_Right",
+			"mesh": "Cube",
+			"parent": -1,
+			"material": 0,
+			"position": [2.0, 1.0, 0.0],
+			"scale": [0.2, 0.2, 0.2]
+		}
+	]
+}

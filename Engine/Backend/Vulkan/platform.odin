@@ -166,6 +166,32 @@ get_window_state :: proc(x: ^i32, y: ^i32, width: ^i32, height: ^i32, fullscreen
     return true
 }
 
+shutdown_window :: proc() {
+    if self.is_initialized {
+        engine_cleanup(&self)
+    }
+    if len(self.window_title) > 0 {
+        delete(self.window_title)
+        self.window_title = ""
+    }
+}
+
+load_level_from_json :: proc(file_path: string) -> bool {
+    if !self.is_initialized {
+        log.warn("load_level_from_json: Vulkan backend is not initialized")
+        return false
+    }
+    return scene_load_from_file(&self, file_path)
+}
+
+save_level_to_json :: proc(file_path: string) -> bool {
+    if !self.is_initialized {
+        log.warn("save_level_to_json: Vulkan backend is not initialized")
+        return false
+    }
+    return save_scene_graph(&self, file_path)
+}
+
 get_monitor_resolution :: proc() -> (u32, u32) {
     mode := glfw.GetVideoMode(glfw.GetPrimaryMonitor())
     ensure(mode != nil)

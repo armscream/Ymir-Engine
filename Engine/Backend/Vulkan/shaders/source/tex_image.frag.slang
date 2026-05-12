@@ -12,7 +12,7 @@ struct PSOutput
     float4 color : COLOR0;
 };
 
-[[vk::binding(0, 0)]]
+[vk_binding(0, 0)]
 Sampler2D display_texture;
 
 [shader("fragment")]

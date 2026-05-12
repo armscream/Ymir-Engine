@@ -68,10 +68,99 @@ Window_Handle :: struct #raw_union {
 // Keeps everything the main loop needs in one object.
 Runtime_State :: struct {
 	config:           Game_Config,
+	editor_ui_enabled: bool,
 	level_data:       Level_Data,
+	renderer_level_loaded: bool,
 	keybinds:         Keybinds,
 	keybinds_path:    string,
 	game_config_path: string,
+}
+
+load_level_from_json :: proc(
+	runtime: ^Runtime_State,
+	file_path: string,
+	sync_renderer := true,
+) -> (ok: bool) {
+	ensure(runtime != nil, "Invalid runtime")
+
+	level_json, level_read_err := os.read_entire_file(file_path, context.temp_allocator)
+	if level_read_err != nil {
+		fmt.eprintln("Failed to read level:", level_read_err)
+		return false
+	}
+
+	free_level_data(&runtime.level_data)
+	if level_unmarshal_err := json.unmarshal(level_json, &runtime.level_data);
+	   level_unmarshal_err != nil {
+		fmt.eprintln("Failed to parse level:", level_unmarshal_err)
+		return false
+	}
+
+	if !sync_renderer {
+		return true
+	}
+
+	switch runtime.config.renderer_backend {
+	case "Vulkan":
+		if !vk.load_level_from_json(file_path) {
+			fmt.eprintln("Vulkan backend failed to load level scene graph:", file_path)
+			return false
+		}
+	case "SDL3", "Software", "undefined":
+		// No scene graph backend integration for these paths yet.
+	}
+
+	return true
+}
+
+save_level_to_json :: proc(
+	runtime: ^Runtime_State,
+	file_path: string,
+	sync_renderer := true,
+) -> (ok: bool) {
+	ensure(runtime != nil, "Invalid runtime")
+	backend_saved_scene := false
+
+	if sync_renderer {
+		switch runtime.config.renderer_backend {
+		case "Vulkan":
+			if !vk.save_level_to_json(file_path) {
+				fmt.eprintln("Vulkan backend failed to save level scene graph:", file_path)
+				return false
+			}
+			backend_saved_scene = true
+		case "SDL3", "Software", "undefined":
+			// No scene graph backend integration for these paths yet.
+			fmt.println("No scene graph save integration for backend: ", runtime.config.renderer_backend)
+		}
+	}
+
+	if backend_saved_scene {
+		return true
+	}
+
+	json_opt := json.Marshal_Options {
+		pretty     = true,
+		use_spaces = true,
+		spaces     = 2,
+	}
+
+	if level_out, err := json.marshal(runtime.level_data, json_opt, context.temp_allocator);
+	   err == nil {
+		if write_err := os.write_entire_file(
+			file_path,
+			level_out,
+			os.Permissions_Read_All + {.Write_User},
+			true,
+		); write_err != nil {
+			fmt.eprintln("Failed to write level:", write_err)
+			return false
+		}
+		return true
+	}
+
+	fmt.eprintln("Failed to serialize level json")
+	return false
 }
 
 init_engine :: proc(config: Game_Config, debug: bool) -> (ok: bool, window: Window_Handle) {
@@ -85,6 +174,9 @@ init_engine :: proc(config: Game_Config, debug: bool) -> (ok: bool, window: Wind
 			config.window_width,
 			config.window_height,
 		)
+		if sdl3_win == nil {
+			return false, Window_Handle{}
+		}
 		return true, Window_Handle{sdl3 = sdl3_win^}
 
 	case "Vulkan":
@@ -95,6 +187,9 @@ init_engine :: proc(config: Game_Config, debug: bool) -> (ok: bool, window: Wind
 			config.window_width,
 			config.window_height,
 		)
+		if glfw_win == nil {
+			return false, Window_Handle{}
+		}
 		return true, Window_Handle{glfw = glfw_win}
 
 	case "Software":
@@ -173,23 +268,11 @@ boot_runtime :: proc(config_path := game_config_path) -> (runtime: Runtime_State
 	runtime.keybinds_path = runtime.config.keybinds_path
 	runtime.keybinds, _ = load_keybinds(runtime.keybinds_path)
 
-	level_json, level_read_err := os.read_entire_file(
-		runtime.config.current_level,
-		context.temp_allocator,
-	)
-	if level_read_err != nil {
-		fmt.eprintln("Failed to read level:", level_read_err)
+	if !load_level_from_json(&runtime, runtime.config.current_level, false) {
 		free_game_config(&runtime.config)
 		return Runtime_State{}, false
 	}
-
-	if level_unmarshal_err := json.unmarshal(level_json, &runtime.level_data);
-	   level_unmarshal_err != nil {
-		fmt.eprintln("Failed to parse level:", level_unmarshal_err)
-		free_level_data(&runtime.level_data)
-		free_game_config(&runtime.config)
-		return Runtime_State{}, false
-	}
+	runtime.renderer_level_loaded = false
 
 	return runtime, true
 }
@@ -256,15 +339,6 @@ shutdown_runtime :: proc(runtime: ^Runtime_State) {
 			true,
 		)
 	}
-	if level_out, err := json.marshal(runtime.level_data, allocator = context.temp_allocator);
-	   err == nil {
-		_ = os.write_entire_file(
-			runtime.config.current_level,
-			level_out,
-			os.Permissions_Read_All + {.Write_User},
-			true,
-		)
-	}
 
 	_ = save_keybinds(runtime.keybinds_path, runtime.keybinds)
 
@@ -272,7 +346,7 @@ shutdown_runtime :: proc(runtime: ^Runtime_State) {
 	case "SDL3":
         Bsdl3.shutdown_window()
 	case "Vulkan":
-		// engine cleanup is done in the backend for vulkan
+		vk.shutdown_window()
 	case "Software":
 		soft.shutdown_window()
 	case "undefined":
@@ -285,6 +359,11 @@ shutdown_runtime :: proc(runtime: ^Runtime_State) {
 }
 
 draw_frame :: proc(runtime: ^Runtime_State) {
+	if !runtime.renderer_level_loaded {
+		_ = load_level_from_json(runtime, runtime.config.current_level, true)
+		runtime.renderer_level_loaded = true
+	}
+
 	switch runtime.config.renderer_backend {
 	case "SDL3":
 		Bsdl3.draw_frame(runtime, runtime.config.window_width, runtime.config.window_height)

@@ -5,18 +5,24 @@ import "core:fmt"
 import "core:log"
 import "core:mem"
 
-startup_mode := ye.Engine_Startup.game
+startup_mode := ye.Engine_Startup.editor
 game_config_path := "Config/game.json"
 
 run_game := bool(true)
+run_editor := bool(true)
 ODIN_DEBUG :: #config(ODIN_DEBUG, false);
 
 main :: proc() {
+	when ODIN_DEBUG {
+		context.logger = log.create_console_logger(opt = {.Level, .Terminal_Color})
+	} else {
+		context.logger = log.create_console_logger(opt = {.Level})
+	}
+	defer log.destroy_console_logger(context.logger)
+
 	// Initialize the Ymir Engine //
 	when ODIN_DEBUG{
 			fmt.println("Starting in debug mode")
-			context.logger = log.create_console_logger(opt = {.Level, .Terminal_Color})
-			defer log.destroy_console_logger(context.logger)
 			track: mem.Tracking_Allocator
 			mem.tracking_allocator_init(&track, context.allocator)
 			context.allocator = mem.tracking_allocator(&track)
@@ -43,25 +49,29 @@ main :: proc() {
 		if !ok {
 			return
 		}
+		runtime.editor_ui_enabled = startup_mode == ye.Engine_Startup.editor
 		// Always run full shutdown sequence (save + cleanup), even on early returns.
 		defer ye.shutdown_runtime(&runtime)
 		// Initialize the game with the specified renderer backend
-		window, __ := ye.init_engine(runtime.config, debug = ODIN_DEBUG)
+		init_ok, _ := ye.init_engine(runtime.config, debug = ODIN_DEBUG)
+		if !init_ok {
+			log.error("Engine initialization failed, exiting.")
+			return
+		}
 
 		
 	switch startup_mode {
 	case ye.Engine_Startup.editor:
 		{
 			fmt.println("Starting in editor mode")
-			fmt.println("Editor mode not wired yet, you can fire off the editor.exe in the meantime :)")
-			/*for run_editor {
+			for run_editor {
 				if ye.should_quit(&runtime) {
 					run_editor = false
 					break
 				}
-				run_editor() // Calling editor loop in editor.odin and destroying based off backend
+				// Calling editor loop in editor.odin and destroying based off backend
 				ye.draw_frame(&runtime)
-			}*/
+			}
 		}
 	case ye.Engine_Startup.game:
 		{

@@ -3,72 +3,84 @@ package Vulkan
 // Core
 import "core:math"
 import la "core:math/linalg"
+import "core:log"
+import "core:strings"
 // Vendor
 import vk "vendor:vulkan"
 // Local packages
 import im "../../Libs/imgui"
 import im_glfw "../../Libs/imgui/imgui_impl_glfw"
 import im_vk "../../Libs/imgui/imgui_impl_vulkan"
-import yemath "../../math"
+
+Runtime_Game_Config_View :: struct {
+	renderer_backend: string,
+	editor_backend:   string,
+	game_name:        string,
+	window_x:         i32,
+	window_y:         i32,
+	window_width:     i32,
+	window_height:    i32,
+	fullscreen:       bool,
+	keybinds_path:    string,
+	current_level:    string,
+	levels:           []string,
+}
+
+Runtime_View :: struct {
+	config:            Runtime_Game_Config_View,
+	editor_ui_enabled: bool,
+}
+
+Level_UI_Action :: enum {
+	None,
+	Load_Ok,
+	Load_Failed,
+	Save_Ok,
+	Save_Failed,
+}
+
+runtime_get_config_view :: proc(runtime: rawptr) -> ^Runtime_Game_Config_View {
+	if runtime == nil {
+		return nil
+	}
+	rv := cast(^Runtime_View)runtime
+	return &rv.config
+}
+
+runtime_editor_ui_enabled :: proc(runtime: rawptr) -> bool {
+	if runtime == nil {
+		return false
+	}
+	rv := cast(^Runtime_View)runtime
+	return rv.editor_ui_enabled
+}
+
+runtime_find_current_level_index :: proc(cfg: ^Runtime_Game_Config_View) -> i32 {
+	if cfg == nil {
+		return -1
+	}
+	for lvl, i in cfg.levels {
+		if lvl == cfg.current_level {
+			return i32(i)
+		}
+	}
+	return -1
+}
+
 
 engine_get_current_frame :: #force_inline proc(self: ^Engine) -> ^Frame_Data #no_bounds_check {
 	return &self.frames[self.frame_number % FRAME_OVERLAP]
 }
 
-engine_ui_definition :: proc(self: ^Engine) {
-	im_glfw.new_frame()
-	im_vk.new_frame()
-	im.new_frame()
-
-	if im.begin("Background", nil, {.Always_Auto_Resize}) {
-		im.slider_float("Render scale", &self.render_scale, 0.3, 1.0)
-
-		selected := &self.background_effects[self.current_background_effect]
-
-		im.text("Selected effect: %s", selected.name)
-
-		@(static) current_background_effect: i32
-		current_background_effect = i32(self.current_background_effect)
-
-		// If the combo is opened and an item is selected, update the current effect
-		if im.begin_combo("Effect", selected.name) {
-			for effect, i in self.background_effects {
-				is_selected := i32(i) == current_background_effect
-				if im.selectable(effect.name, is_selected) {
-					current_background_effect = i32(i)
-					self.current_background_effect = Compute_Effect_Kind(current_background_effect)
-				}
-
-				// Set initial focus when the currently selected item becomes visible
-				if is_selected {
-					im.set_item_default_focus()
-				}
-			}
-			im.end_combo()
-		}
-
-		im.input_float4("data1", &selected.data.data1)
-		im.input_float4("data2", &selected.data.data2)
-		im.input_float4("data3", &selected.data.data3)
-		im.input_float4("data4", &selected.data.data4)
-
-	}
-	im.end()
-
-	im.render()
-}
-
-// Draw loop.
-@(require_results)
-engine_draw :: proc(self: ^Engine) -> (ok: bool) {
+engine_acquire_next_image :: proc(self: ^Engine) -> (ok: bool) {
 	frame := engine_get_current_frame(self)
 
-	// The current command buffer, naming it cmd for shorter writing
-	cmd := engine_get_current_frame(self).main_command_buffer
-
-	// Ensure GPU finished previous work for this frame and unsignal the fence for new submit.
+	// Wait until the gpu has finished rendering the last frame. Timeout of 1 second
 	vk_check(vk.WaitForFences(self.vk_device, 1, &frame.render_fence, true, 1e9)) or_return
+
 	deletion_queue_flush(&frame.deletion_queue)
+	descriptor_growable_clear_pools(&frame.frame_descriptors)
+
 	vk_check(vk.ResetFences(self.vk_device, 1, &frame.render_fence)) or_return
 
 	// Request image from the swapchain
@@ -85,6 +97,16 @@ engine_draw :: proc(self: ^Engine) -> (ok: bool) {
 	if result != .ERROR_OUT_OF_DATE_KHR && result != .SUBOPTIMAL_KHR {
 		vk_check(result) or_return
 	}
+
+	return true
+}
+
+// Draw loop.
+engine_draw :: proc(self: ^Engine) -> (ok: bool) {
+	frame := engine_get_current_frame(self)
+
+	// The the current command buffer, naming it cmd for shorter writing
+	cmd := engine_get_current_frame(self).main_command_buffer
 
 	// Now that we are sure that the commands finished executing, we can safely
 	// reset the command buffer to begin recording again.
@@ -118,7 +140,7 @@ engine_draw :: proc(self: ^Engine) -> (ok: bool) {
 	transition_image(cmd, self.draw_image.image, .GENERAL, .COLOR_ATTACHMENT_OPTIMAL)
 	transition_image(cmd, self.depth_image.image, .UNDEFINED, .DEPTH_ATTACHMENT_OPTIMAL)
 
-	// Draw the geometry
+	// Draw the triangle
 	engine_draw_geometry(self, cmd) or_return
 
 	// Transition the draw image and the swapchain image into their correct transfer layouts
@@ -130,7 +152,6 @@ engine_draw :: proc(self: ^Engine) -> (ok: bool) {
 		.TRANSFER_DST_OPTIMAL,
 	)
 
-	// Execute a copy from the draw image into the swapchain
 	copy_image_to_image(
 		cmd,
 		self.draw_image.image,
@@ -161,10 +182,9 @@ engine_draw :: proc(self: ^Engine) -> (ok: bool) {
 	// Finalize the command buffer (we can no longer add commands, but it can now be executed)
 	vk_check(vk.EndCommandBuffer(cmd)) or_return
 
-	// Prepare the submission to the queue. we want to wait on the
-	// `swapchain_semaphore`, as that semaphore is signaled when the swapchain is
-	// ready. We will signal the `ready_for_present_semaphore`, to signal that
-	// rendering has finished.
+	// Prepare the submission to the queue. we want to wait on the `swapchain_semaphore`, as that
+	// semaphore is signaled when the swapchain is ready. We will signal the
+	// `ready_for_present_semaphore` to signal that rendering has finished.
 
 	ready_for_present_semaphore := self.swapchain_image_semaphores[frame.swapchain_image_index]
 
@@ -178,7 +198,8 @@ engine_draw :: proc(self: ^Engine) -> (ok: bool) {
 	// block until the graphic commands finish execution.
 	vk_check(vk.QueueSubmit2(self.graphics_queue, 1, &submit, frame.render_fence)) or_return
 
-	// Prepare present.
+	// Prepare present
+	//
 	// This will put the image we just rendered to into the visible window. we want to wait on
 	// the `ready_for_present_semaphore` for that, as its necessary that drawing commands
 	// have finished before the image is displayed to the user.
@@ -191,7 +212,7 @@ engine_draw :: proc(self: ^Engine) -> (ok: bool) {
 		pImageIndices      = &frame.swapchain_image_index,
 	}
 
-	result = vk.QueuePresentKHR(self.graphics_queue, &present_info)
+	result := vk.QueuePresentKHR(self.graphics_queue, &present_info)
 
 	if result == .ERROR_OUT_OF_DATE_KHR || result == .SUBOPTIMAL_KHR {
 		engine_resize_swapchain(self) or_return
@@ -207,11 +228,15 @@ engine_draw :: proc(self: ^Engine) -> (ok: bool) {
 
 engine_draw_background :: proc(self: ^Engine, cmd: vk.CommandBuffer) -> (ok: bool) {
 	effect := &self.background_effects[self.current_background_effect]
+	if effect.pipeline == 0 {
+		log.warn("Skipping background draw: compute pipeline is null")
+		return true
+	}
 
-	// Bind the compute pipeline
+	// Bind the gradient drawing compute pipeline
 	vk.CmdBindPipeline(cmd, .COMPUTE, effect.pipeline)
 
-	// Bind the descriptor set containing the draw image
+	// Bind the descriptor set containing the draw image for the compute pipeline
 	vk.CmdBindDescriptorSets(
 		cmd,
 		.COMPUTE,
@@ -223,7 +248,6 @@ engine_draw_background :: proc(self: ^Engine, cmd: vk.CommandBuffer) -> (ok: boo
 		nil,
 	)
 
-	// Push constants
 	vk.CmdPushConstants(
 		cmd,
 		self.gradient_pipeline_layout,
@@ -233,7 +257,8 @@ engine_draw_background :: proc(self: ^Engine, cmd: vk.CommandBuffer) -> (ok: boo
 		&effect.data,
 	)
 
-	// Dispatch the compute shader
+	// Execute the compute pipeline dispatch. We are using 16x16 workgroup size so
+	// we need to divide by it
 	vk.CmdDispatch(
 		cmd,
 		u32(math.ceil_f32(f32(self.draw_extent.width) / 16.0)),
@@ -244,6 +269,150 @@ engine_draw_background :: proc(self: ^Engine, cmd: vk.CommandBuffer) -> (ok: boo
 	return true
 }
 
+render_scene_tree_ui :: proc(scene: ^Scene, #any_int node: i32, selected_node: ^i32) -> i32 {
+	name := scene_get_node_name(scene, node)
+	label := len(name) == 0 ? "NO NODE" : name
+	is_leaf := scene.hierarchy[node].first_child < 0
+	flags: im.Tree_Node_Flags = is_leaf ? {.Leaf, .Bullet} : {}
+
+	if node == selected_node^ {
+		flags += {.Selected}
+	}
+
+	// Make the node span the entire width
+	flags += {.Span_Full_Width, .Frame_Padding}
+
+	is_opened := im.tree_node_ex_ptr(&scene.hierarchy[node], flags, "%s", cstring(raw_data(label)))
+
+	// Check for clicks in the entire row area
+	was_clicked := im.is_item_clicked()
+
+	im.push_id_int(node)
+	{
+		if was_clicked {
+			log.debugf("Selected node: %d (%s)", node, label)
+			selected_node^ = node
+		}
+
+		if is_opened {
+			for ch := scene.hierarchy[node].first_child;
+			    ch != -1;
+			    ch = scene.hierarchy[ch].next_sibling {
+				if sub_node := render_scene_tree_ui(scene, ch, selected_node); sub_node > -1 {
+					selected_node^ = sub_node
+				}
+			}
+			im.tree_pop()
+		}
+	}
+	im.pop_id()
+
+	return selected_node^
+}
+
+engine_ui_definition :: proc(self: ^Engine, runtime: rawptr) {
+	// imgui new frame
+	im_glfw.new_frame()
+	im_vk.new_frame()
+	im.new_frame()
+
+	if !runtime_editor_ui_enabled(runtime) {
+		im.render()
+		return
+	}
+
+	v := im.get_main_viewport()
+	im.set_next_window_pos({10, 10})
+	im.set_next_window_size({300, v.work_size.y - 20})
+	im.begin("Hierarchy", nil, {.No_Focus_On_Appearing, .No_Collapse, .No_Resize})
+	@(static) selected_node: i32 = -1
+	for &hierarchy, i in self.scene.hierarchy {
+		if hierarchy.parent == -1 {
+			render_scene_tree_ui(&self.scene, i, &selected_node)
+		}
+	}
+
+	im.separator()
+	im.text("Level")
+
+	if cfg := runtime_get_config_view(runtime); cfg != nil {
+		@(static) selected_level_idx: i32 = -1
+		@(static) last_level_action: Level_UI_Action = .None
+
+		if selected_level_idx < 0 || selected_level_idx >= i32(len(cfg.levels)) {
+			selected_level_idx = runtime_find_current_level_index(cfg)
+		}
+		if selected_level_idx < 0 && len(cfg.levels) > 0 {
+			selected_level_idx = 0
+		}
+
+		preview_level := cfg.current_level
+		if selected_level_idx >= 0 && selected_level_idx < i32(len(cfg.levels)) {
+			preview_level = cfg.levels[selected_level_idx]
+		}
+
+		if im.begin_combo("Level File", cstring(raw_data(preview_level))) {
+			for lvl, i in cfg.levels {
+				is_selected := i32(i) == selected_level_idx
+				if im.selectable(cstring(raw_data(lvl)), is_selected) {
+					selected_level_idx = i32(i)
+				}
+				if is_selected {
+					im.set_item_default_focus()
+				}
+			}
+			im.end_combo()
+		}
+
+		if im.button("Load Level") {
+			if selected_level_idx >= 0 && selected_level_idx < i32(len(cfg.levels)) {
+				selected_path := cfg.levels[selected_level_idx]
+				if load_level_from_json(selected_path) {
+					last_level_action = .Load_Ok
+					if cfg.current_level != selected_path {
+						delete(cfg.current_level)
+						cfg.current_level = strings.clone(selected_path)
+					}
+				} else {
+					last_level_action = .Load_Failed
+				}
+			} else {
+				last_level_action = .Load_Failed
+			}
+		}
+
+		if im.button("Save Level") {
+			if save_level_to_json(cfg.current_level) {
+				last_level_action = .Save_Ok
+			} else {
+				last_level_action = .Save_Failed
+			}
+		}
+
+		if last_level_action != .None {
+			im.separator()
+			switch last_level_action {
+			case .Load_Ok:
+				im.text("Last action: Load Level OK")
+			case .Load_Failed:
+				im.text("Last action: Load Level FAILED")
+			case .Save_Ok:
+				im.text("Last action: Save Level OK")
+			case .Save_Failed:
+				im.text("Last action: Save Level FAILED")
+			case .None:
+			}
+		}
+	} else {
+		im.text("Runtime unavailable")
+	}
+
+	im.end()
+
+	// make imgui calculate internal draw structures
+	im.render()
+}
+
 engine_draw_imgui :: proc(
 	self: ^Engine,
 	cmd: vk.CommandBuffer,
@@ -251,22 +420,23 @@ engine_draw_imgui :: proc(
 ) -> (
 	ok: bool,
 ) {
-	color_attachment := attachment_info(target_view, nil, .COLOR_ATTACHMENT_OPTIMAL)
-	render_info := rendering_info(self.swapchain_extent, &color_attachment, nil)
+	if data := im.get_draw_data(); data != nil {
+		color_attachment := attachment_info(target_view, nil, .COLOR_ATTACHMENT_OPTIMAL)
+		render_info := rendering_info(self.swapchain_extent, &color_attachment, nil)
 
-	vk.CmdBeginRendering(cmd, &render_info)
+		vk.CmdBeginRendering(cmd, &render_info)
 
-	im_vk.render_draw_data(im.get_draw_data(), cmd)
+		im_vk.render_draw_data(im.get_draw_data(), cmd)
 
-	vk.CmdEndRendering(cmd)
+		vk.CmdEndRendering(cmd)
+	}
 
-	return
+	return true
 }
 
 engine_draw_geometry :: proc(self: ^Engine, cmd: vk.CommandBuffer) -> (ok: bool) {
 	// Begin a render pass connected to our draw image
 	color_attachment := attachment_info(self.draw_image.image_view, nil, .COLOR_ATTACHMENT_OPTIMAL)
-
 	depth_attachment := depth_attachment_info(
 		self.depth_image.image_view,
 		.DEPTH_ATTACHMENT_OPTIMAL,
@@ -275,74 +445,111 @@ engine_draw_geometry :: proc(self: ^Engine, cmd: vk.CommandBuffer) -> (ok: bool)
 	render_info := rendering_info(self.draw_extent, &color_attachment, &depth_attachment)
 	vk.CmdBeginRendering(cmd, &render_info)
 
-	if self.mesh_pipeline != 0 && self.mesh_pipeline_layout != 0 {
-		vk.CmdBindPipeline(cmd, .GRAPHICS, self.mesh_pipeline)
-
-		// Set dynamic viewport and scissor after binding a graphics pipeline
-		viewport := vk.Viewport {
-			x        = 0,
-			y        = 0,
-			width    = f32(self.draw_extent.width),
-			height   = f32(self.draw_extent.height),
-			minDepth = 0.0,
-			maxDepth = 1.0,
-		}
-
-		vk.CmdSetViewport(cmd, 0, 1, &viewport)
-
-		scissor := vk.Rect2D {
-			offset = {x = 0, y = 0},
-			extent = {width = self.draw_extent.width, height = self.draw_extent.height},
-		}
-
-		vk.CmdSetScissor(cmd, 0, 1, &scissor)
+	// Set dynamic viewport and scissor
+	viewport := vk.Viewport {
+		x        = 0,
+		y        = 0,
+		width    = f32(self.draw_extent.width),
+		height   = f32(self.draw_extent.height),
+		minDepth = 0.0,
+		maxDepth = 1.0,
 	}
 
-	// Create view matrix - place camera at positive Z looking at origin
-	view := la.matrix4_translate_f32({0, 0, -5})
+	vk.CmdSetViewport(cmd, 0, 1, &viewport)
 
-	// Create infinite perspective projection matrix with REVERSED depth
-	projection := yemath.matrix4_perspective_reverse_z_f32(
-		f32(la.to_radians(70.0)),
-		f32(self.draw_extent.width) / f32(self.draw_extent.height),
-		0.1,
-		true, // Invert the Y direction to match OpenGL and glTF axis conventions
+	scissor := vk.Rect2D {
+		offset = {x = 0, y = 0},
+		extent = {width = self.draw_extent.width, height = self.draw_extent.height},
+	}
+
+	vk.CmdSetScissor(cmd, 0, 1, &scissor)
+
+	frame := engine_get_current_frame(self)
+
+	// Allocate a new uniform buffer for the scene data
+	gpu_scene_data_buffer := create_buffer(
+		self,
+		size_of(GPU_Scene_Data),
+		{.UNIFORM_BUFFER},
+		.Cpu_To_Gpu,
+	) or_return
+
+	// Add it to the deletion queue of this frame so it gets deleted once its been used
+	deletion_queue_push(&frame.deletion_queue, gpu_scene_data_buffer)
+
+	// Write the buffer
+	scene_uniform_data := cast(^GPU_Scene_Data)gpu_scene_data_buffer.info.mapped_data
+	scene_uniform_data^ = self.scene_data
+
+	// Create a descriptor set that binds that buffer and update it
+	global_descriptor := descriptor_growable_allocate(
+		&frame.frame_descriptors,
+		&self.gpu_scene_data_descriptor_layout,
+	) or_return
+
+	writer: Descriptor_Writer
+	descriptor_writer_init(&writer, self.vk_device)
+	descriptor_writer_write_buffer(
+		&writer,
+		binding = 0,
+		buffer = gpu_scene_data_buffer.buffer,
+		size = size_of(GPU_Scene_Data),
+		offset = 0,
+		type = .UNIFORM_BUFFER,
 	)
+	descriptor_writer_update_set(&writer, global_descriptor)
 
-	if self.mesh_pipeline != 0 && self.mesh_pipeline_layout != 0 && len(self.test_meshes) > 2 {
-		monkey_push := GPU_Draw_Push_Constants {
-			world_matrix = projection * view,
+	// Draw all opaque surfaces
+	for &draw in self.main_draw_context.opaque_surfaces {
+		material := &self.scene.materials[draw.material] // Use draw.material directly
+
+		if material.pipeline == nil || material.pipeline.pipeline == 0 || material.pipeline.layout == 0 {
+			log.warn("Skipping draw with invalid material pipeline")
+			continue
 		}
-		monkey_offsets := [1]vk.DeviceSize{0}
-		vk.CmdBindVertexBuffers(
+
+		vk.CmdBindPipeline(cmd, .GRAPHICS, material.pipeline.pipeline)
+		vk.CmdBindDescriptorSets(
 			cmd,
+			.GRAPHICS,
+			material.pipeline.layout,
 			0,
 			1,
-			&self.test_meshes[2].mesh_buffers.vertex_buffer.buffer,
-			&monkey_offsets[0],
+			&global_descriptor,
+			0,
+			nil,
 		)
+		vk.CmdBindDescriptorSets(
+			cmd,
+			.GRAPHICS,
+			material.pipeline.layout,
+			1,
+			1,
+			&material.material_set,
+			0,
+			nil,
+		)
+
+		vertex_buffer_offset := vk.DeviceSize(0)
+		vk.CmdBindVertexBuffers(cmd, 0, 1, &draw.vertex_buffer, &vertex_buffer_offset)
+
+		vk.CmdBindIndexBuffer(cmd, draw.index_buffer, 0, .UINT32)
+
+		push_constants := GPU_Draw_Push_Constants {
+			vertex_buffer = draw.vertex_buffer_address,
+			world_matrix  = draw.transform,
+		}
+
 		vk.CmdPushConstants(
 			cmd,
-			self.mesh_pipeline_layout,
+			material.pipeline.layout,
 			{.VERTEX},
 			0,
 			size_of(GPU_Draw_Push_Constants),
-			&monkey_push,
+			&push_constants,
 		)
-		vk.CmdBindIndexBuffer(
-			cmd,
-			self.test_meshes[2].mesh_buffers.index_buffer.buffer,
-			0,
-			.UINT32,
-		)
-		vk.CmdDrawIndexed(
-			cmd,
-			self.test_meshes[2].surfaces[0].count,
-			1,
-			self.test_meshes[2].surfaces[0].start_index,
-			0,
-			0,
-		)
+
+		vk.CmdDrawIndexed(cmd, draw.index_count, 1, draw.first_index, 0, 0)
 	}
 
 	vk.CmdEndRendering(cmd)

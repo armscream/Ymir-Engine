@@ -88,6 +88,20 @@ Stop-RunningEditorExe -ExePath $exe
 $odinDist = Resolve-OdinDist -OdinCommand $OdinExe
 Write-Host "Using Odin dist: $odinDist"
 
+# Compile shaders first
+$shaderSourceDir = Join-Path -Path $root -ChildPath "Engine/Backend/Vulkan/shaders/source"
+if (Test-Path -LiteralPath $shaderSourceDir) {
+    Write-Host "Compiling shaders..."
+    Push-Location $shaderSourceDir
+    & .\compile.bat
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Shader compilation had warnings or errors, but continuing..."
+    }
+    Pop-Location
+} else {
+    Write-Warning "Shader source directory not found: $shaderSourceDir"
+}
+
 & $OdinExe build $EditorDir "-out:$OutPath" "-extra-linker-flags:/LIBPATH:`"$imguiLibDir`" imgui_windows_x64.lib /LIBPATH:`"C:\VulkanSDK\1.4.341.1\Lib`" vulkan-1.lib"
 if ($LASTEXITCODE -ne 0) {
     throw "Odin build failed with exit code $LASTEXITCODE"

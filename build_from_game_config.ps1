@@ -53,6 +53,20 @@ $outPath = Join-Path -Path $OutputDir -ChildPath ($safeGameName + ".exe")
 Write-Host "Game name from config: $gameName"
 Write-Host "Output executable: $outPath"
 
+# Compile shaders first
+$shaderSourceDir = Join-Path -Path $PSScriptRoot -ChildPath "Engine/Backend/Vulkan/shaders/source"
+if (Test-Path -LiteralPath $shaderSourceDir) {
+    Write-Host "Compiling shaders..."
+    Push-Location $shaderSourceDir
+    & .\compile.bat
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Shader compilation had warnings or errors, but continuing..."
+    }
+    Pop-Location
+} else {
+    Write-Warning "Shader source directory not found: $shaderSourceDir"
+}
+
 $odinArgs = @(
     "build",
     $AppDir,

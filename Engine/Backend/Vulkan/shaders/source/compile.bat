@@ -25,7 +25,7 @@ if not exist "%COMPILER%" (
 :continue
 
 :: Check for watch argument
-set "watch_mode=true"
+set "watch_mode=false"
 if "%1"=="watch" set "watch_mode=true"
 
 :: Initial compilation of all files

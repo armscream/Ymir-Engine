@@ -42,6 +42,8 @@ Resource :: union {
 	// Higher-level custom resources
 	Allocated_Image,
 	Allocated_Buffer,
+	Descriptor_Allocator_Growable,
+	Metallic_Roughness,
 }
 
 Deletion_Queue :: struct {
@@ -137,6 +139,10 @@ deletion_queue_flush :: proc(self: ^Deletion_Queue) {
 			destroy_image(res)
 		case Allocated_Buffer:
 			destroy_buffer(res)
+		case Descriptor_Allocator_Growable:
+			descriptor_growable_destroy_pools(res)
+		case Metallic_Roughness:
+			metallic_roughness_clear_resources(res)
 		}
 	}
 
