@@ -115,6 +115,9 @@ engine_cleanup :: proc(self: ^Engine) {
 
 	// Flush and destroy the global deletion queue
 	deletion_queue_destroy(&self.main_deletion_queue)
+	if g_editor_shutdown_hook != nil {
+		g_editor_shutdown_hook()
+	}
 
 	im.destroy_context()
 

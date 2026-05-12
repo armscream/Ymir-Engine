@@ -4,7 +4,6 @@ package Vulkan
 import "core:math"
 import la "core:math/linalg"
 import "core:log"
-import "core:strings"
 // Vendor
 import vk "vendor:vulkan"
 // Local packages
@@ -31,14 +30,6 @@ Runtime_View :: struct {
 	editor_ui_enabled: bool,
 }
 
-Level_UI_Action :: enum {
-	None,
-	Load_Ok,
-	Load_Failed,
-	Save_Ok,
-	Save_Failed,
-}
-
 runtime_get_config_view :: proc(runtime: rawptr) -> ^Runtime_Game_Config_View {
 	if runtime == nil {
 		return nil
@@ -53,18 +44,6 @@ runtime_editor_ui_enabled :: proc(runtime: rawptr) -> bool {
 	}
 	rv := cast(^Runtime_View)runtime
 	return rv.editor_ui_enabled
-}
-
-runtime_find_current_level_index :: proc(cfg: ^Runtime_Game_Config_View) -> i32 {
-	if cfg == nil {
-		return -1
-	}
-	for lvl, i in cfg.levels {
-		if lvl == cfg.current_level {
-			return i32(i)
-		}
-	}
-	return -1
 }
 
 
@@ -310,6 +289,19 @@ render_scene_tree_ui :: proc(scene: ^Scene, #any_int node: i32, selected_node: ^
 	return selected_node^
 }
 
+draw_hierarchy_content_ui :: proc(user_data: rawptr) {
+	if user_data == nil {
+		return
+	}
+	self := cast(^Engine)user_data
+	@(static) selected_node: i32 = -1
+	for &hierarchy, i in self.scene.hierarchy {
+		if hierarchy.parent == -1 {
+			render_scene_tree_ui(&self.scene, i, &selected_node)
+		}
+	}
+}
+
 engine_ui_definition :: proc(self: ^Engine, runtime: rawptr) {
 	// imgui new frame
 	im_glfw.new_frame()
@@ -322,92 +314,16 @@ engine_ui_definition :: proc(self: ^Engine, runtime: rawptr) {
 	}
 
 	v := im.get_main_viewport()
-	im.set_next_window_pos({10, 10})
-	im.set_next_window_size({300, v.work_size.y - 20})
-	im.begin("Hierarchy", nil, {.No_Focus_On_Appearing, .No_Collapse, .No_Resize})
-	@(static) selected_node: i32 = -1
-	for &hierarchy, i in self.scene.hierarchy {
-		if hierarchy.parent == -1 {
-			render_scene_tree_ui(&self.scene, i, &selected_node)
-		}
+	if g_editor_draw_ui_hook != nil {
+		g_editor_draw_ui_hook(Editor_Draw_UI_Params{
+			display_size           = v.work_size,
+			runtime_config         = runtime_get_config_view(runtime),
+			draw_hierarchy_content = draw_hierarchy_content_ui,
+			hierarchy_user_data    = self,
+			load_level             = load_level_from_json,
+			save_level             = save_level_to_json,
+		})
 	}
-
-	im.separator()
-	im.text("Level")
-
-	if cfg := runtime_get_config_view(runtime); cfg != nil {
-		@(static) selected_level_idx: i32 = -1
-		@(static) last_level_action: Level_UI_Action = .None
-
-		if selected_level_idx < 0 || selected_level_idx >= i32(len(cfg.levels)) {
-			selected_level_idx = runtime_find_current_level_index(cfg)
-		}
-		if selected_level_idx < 0 && len(cfg.levels) > 0 {
-			selected_level_idx = 0
-		}
-
-		preview_level := cfg.current_level
-		if selected_level_idx >= 0 && selected_level_idx < i32(len(cfg.levels)) {
-			preview_level = cfg.levels[selected_level_idx]
-		}
-
-		if im.begin_combo("Level File", cstring(raw_data(preview_level))) {
-			for lvl, i in cfg.levels {
-				is_selected := i32(i) == selected_level_idx
-				if im.selectable(cstring(raw_data(lvl)), is_selected) {
-					selected_level_idx = i32(i)
-				}
-				if is_selected {
-					im.set_item_default_focus()
-				}
-			}
-			im.end_combo()
-		}
-
-		if im.button("Load Level") {
-			if selected_level_idx >= 0 && selected_level_idx < i32(len(cfg.levels)) {
-				selected_path := cfg.levels[selected_level_idx]
-				if load_level_from_json(selected_path) {
-					last_level_action = .Load_Ok
-					if cfg.current_level != selected_path {
-						delete(cfg.current_level)
-						cfg.current_level = strings.clone(selected_path)
-					}
-				} else {
-					last_level_action = .Load_Failed
-				}
-			} else {
-				last_level_action = .Load_Failed
-			}
-		}
-
-		if im.button("Save Level") {
-			if save_level_to_json(cfg.current_level) {
-				last_level_action = .Save_Ok
-			} else {
-				last_level_action = .Save_Failed
-			}
-		}
-
-		if last_level_action != .None {
-			im.separator()
-			switch last_level_action {
-			case .Load_Ok:
-				im.text("Last action: Load Level OK")
-			case .Load_Failed:
-				im.text("Last action: Load Level FAILED")
-			case .Save_Ok:
-				im.text("Last action: Save Level OK")
-			case .Save_Failed:
-				im.text("Last action: Save Level FAILED")
-			case .None:
-			}
-		}
-	} else {
-		im.text("Runtime unavailable")
-	}
-
-	im.end()
 
 	// make imgui calculate internal draw structures
 	im.render()

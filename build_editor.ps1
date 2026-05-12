@@ -1,50 +1,11 @@
 param(
     [string]$EditorDir = "Editor",
     [string]$OutPath = "Build/Editor.exe",
-    [string]$RunWorkingDir = "App",
     [string]$OdinExe = "odin"
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-
-function Resolve-OdinDist {
-    param([string]$OdinCommand)
-
-    $odinCmd = Get-Command $OdinCommand -ErrorAction Stop
-    return Split-Path -Parent $odinCmd.Source
-}
-
-function Copy-SdlRuntimeDlls {
-    param(
-        [string]$OdinDist,
-        [string]$OutputDirectory
-    )
-
-    $dlls = @()
-
-    $sdlCoreDll = Join-Path $OdinDist "vendor/sdl3/SDL3.dll"
-    if (Test-Path -LiteralPath $sdlCoreDll) {
-        $dlls += $sdlCoreDll
-    } else {
-        Write-Warning "Runtime DLL not found: $sdlCoreDll"
-    }
-
-    $imageDllDir = Join-Path $OdinDist "vendor/sdl3/image"
-    if (Test-Path -LiteralPath $imageDllDir) {
-        $imageDlls = Get-ChildItem -LiteralPath $imageDllDir -Filter "*.dll" -File
-        foreach ($imageDll in $imageDlls) {
-            $dlls += $imageDll.FullName
-        }
-    } else {
-        Write-Warning "Runtime DLL directory not found: $imageDllDir"
-    }
-
-    foreach ($dll in $dlls) {
-        Copy-Item -LiteralPath $dll -Destination $OutputDirectory -Force
-        Write-Host "Staged runtime: $([System.IO.Path]::GetFileName($dll))"
-    }
-}
 
 function Stop-RunningEditorExe {
     param([string]$ExePath)
@@ -86,9 +47,6 @@ New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 $exe = Join-Path $root $OutPath
 Stop-RunningEditorExe -ExePath $exe
 
-$odinDist = Resolve-OdinDist -OdinCommand $OdinExe
-Write-Host "Using Odin dist: $odinDist"
-
 # Compile shaders first
 $shaderSourceDir = Join-Path -Path $root -ChildPath "Engine/Backend/Vulkan/shaders/source"
 if (Test-Path -LiteralPath $shaderSourceDir) {
@@ -112,18 +70,4 @@ if (-not (Test-Path -LiteralPath $exe)) {
     throw "Expected editor executable not found: $exe"
 }
 
-Copy-SdlRuntimeDlls -OdinDist $odinDist -OutputDirectory (Split-Path -Parent $exe)
-
-$runCwd = Join-Path -Path $root -ChildPath $RunWorkingDir
-if (-not (Test-Path -LiteralPath $runCwd)) {
-    throw "Run working directory not found: $runCwd"
-}
-
-Write-Host "Launching editor: $exe"
-Write-Host "Run working directory: $runCwd"
-Push-Location $runCwd
-try {
-    & $exe
-} finally {
-    Pop-Location
-}
+Write-Host "Editor build complete: $exe"

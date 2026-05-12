@@ -5,7 +5,7 @@ import "core:fmt"
 import "core:log"
 import "core:mem"
 
-startup_mode := ye.Engine_Startup.editor
+startup_mode := ye.Engine_Startup.game
 game_config_path := "Config/game.json"
 
 run_game := bool(true)
