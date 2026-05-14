@@ -411,7 +411,8 @@ project "ImGui"
 	includedirs {
 		IMGUI_DIR,
 		GENERATED_DIR,
-		IMGUI_DIR .. "/backends"
+        IMGUI_DIR .. "/backends",
+        "resources/ImGuizmo"
 	}
 
 	defines {
@@ -422,7 +423,8 @@ project "ImGui"
 
 	files {
 		IMGUI_DIR .. "/*.cpp",
-		GENERATED_DIR .. "/*.cpp"
+        GENERATED_DIR .. "/*.cpp",
+        "resources/ImGuizmo/*.cpp"
 	}
 
 	-- When checking if a backend is enabled:
