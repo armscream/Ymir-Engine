@@ -33,12 +33,19 @@ $imguiLibPath = Join-Path -Path $imguiLibDir -ChildPath "imgui_windows_x64.lib"
 $meshoptLibDir = Join-Path -Path $root -ChildPath "Engine/Libs/meshoptimizer"
 $meshoptLibPath = Join-Path -Path $meshoptLibDir -ChildPath "meshoptimizer_windows_x86_64.lib"
 
+$imguizmoLibDir = Join-Path -Path $root -ChildPath "Engine/Libs/imguizmo"
+$imguizmoLibPath = Join-Path -Path $imguizmoLibDir -ChildPath "imguizmo_windows_x64.lib"
+
 if (-not (Test-Path -LiteralPath $imguiLibPath)) {
     throw "ImGui static library not found: $imguiLibPath"
 }
 
 if (-not (Test-Path -LiteralPath $meshoptLibPath)) {
     throw "meshoptimizer static library not found: $meshoptLibPath"
+}
+
+if (-not (Test-Path -LiteralPath $imguizmoLibPath)) {
+    throw "ImGuizmo static library not found: $imguizmoLibPath"
 }
 
 Write-Host "Building editor from: $EditorDir"
@@ -68,7 +75,7 @@ if (Test-Path -LiteralPath $shaderSourceDir) {
     Write-Warning "Shader source directory not found: $shaderSourceDir"
 }
 
-& $OdinExe build $EditorDir "-out:$OutPath" "-extra-linker-flags:/LIBPATH:`"$imguiLibDir`" imgui_windows_x64.lib /LIBPATH:`"$meshoptLibDir`" meshoptimizer_windows_x86_64.lib /LIBPATH:`"C:\VulkanSDK\1.4.341.1\Lib`" vulkan-1.lib"
+& $OdinExe build $EditorDir "-out:$OutPath" "-extra-linker-flags:/LIBPATH:`"$imguiLibDir`" imgui_windows_x64.lib /LIBPATH:`"$meshoptLibDir`" meshoptimizer_windows_x86_64.lib /LIBPATH:`"$imguizmoLibDir`" imguizmo_windows_x64.lib /LIBPATH:`"C:\VulkanSDK\1.4.341.1\Lib`" vulkan-1.lib"
 if ($LASTEXITCODE -ne 0) {
     throw "Odin build failed with exit code $LASTEXITCODE"
 }

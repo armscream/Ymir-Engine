@@ -9,35 +9,42 @@
             "type": "node-terminal",
             "request": "launch",
             "cwd": "${workspaceFolder}",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/build_from_game_config.ps1\""
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/.vscode/build_from_game_config.ps1\""
         },
         {
             "name": "DEBUG: Build and Run Game",
             "type": "node-terminal",
             "request": "launch",
             "cwd": "${workspaceFolder}",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/run_from_game_config_debug.ps1\""
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/.vscode/run_from_game_config_debug.ps1\""
         },
         {
             "name": "Build and Run Game",
             "type": "node-terminal",
             "request": "launch",
             "cwd": "${workspaceFolder}",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/run_from_game_config.ps1\""
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/.vscode/run_from_game_config.ps1\""
         },
         {
             "name": "Build Editor",
             "type": "node-terminal",
             "request": "launch",
             "cwd": "${workspaceFolder}",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"New-Item -ItemType Directory -Path 'Build' -Force | Out-Null; odin build Editor -out:Build/Editor.exe -subsystem:windows\""
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/.vscode/build_editor.ps1\""
         },
         {
             "name": "Build and Run Editor",
             "type": "node-terminal",
             "request": "launch",
             "cwd": "${workspaceFolder}",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/build_and_run_editor.ps1\""
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/.vscode/build_and_run_editor.ps1\""
+        },
+        {
+            "name": "Build and Run Asset Converter",
+            "type": "node-terminal",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/.vscode/build_asset_converter.ps1\""
         }
     ]
 }

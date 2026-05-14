@@ -8,6 +8,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$ProjectRoot = Split-Path $PSScriptRoot -Parent
+
+# Resolve paths relative to project root
+$ConfigPath = Join-Path $ProjectRoot $ConfigPath
+$AppDir = Join-Path $ProjectRoot $AppDir
+$OutputDir = Join-Path $ProjectRoot $OutputDir
+
 function Get-SafeFileName {
     param([string]$Name)
 
@@ -39,10 +46,9 @@ $safeGameName = Get-SafeFileName -Name $gameName
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 $outPath = Join-Path -Path $OutputDir -ChildPath ($safeGameName + ".exe")
 
- # Build with ODIN_DEBUG defined
 & $OdinExe build $AppDir -out:$outPath -define:ODIN_DEBUG=1
 if ($LASTEXITCODE -ne 0) {
     throw "Build failed with exit code $LASTEXITCODE"
 }
 
-Write-Host "Build succeeded: $outPath"
+Write-Host "Build succeeded: $outPath"   

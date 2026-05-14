@@ -1,0 +1,9 @@
+{
+    "lod_count": 1,
+    "generate_meshlets": false,
+    "generate_collision": false,
+    "optimize_overdraw": false,
+    "use_strip_cache": false,
+    "max_meshlet_vertices": 64,
+    "max_meshlet_triangles": 84
+}
