@@ -2,12 +2,9 @@
 package Core
 
 import "core:log"
+import mth "BF_Math"
 
-// ============================================================================
-// SDK
-// ============================================================================
-//
-// Public engine API.
+// **SDK - Public engine API.
 //
 // Game code, modules, and plugins should use SDK procedures rather than
 // reaching directly into engine implementation details. The SDK deliberately
@@ -234,4 +231,27 @@ audio_play :: proc(sound: rawptr) {
 physics_raycast :: proc() -> bool {
 	log.warn("[SDK] physics_raycast: physics module not loaded.")
 	return false
+}
+
+//* SHARED TYPES
+Asset_ID :: distinct u64
+
+GPU_Model_ID :: distinct u32
+GPU_Mesh_ID :: distinct u32
+GPU_Material_ID :: distinct u32
+
+Mode_Ref :: struct {
+	asset: Asset_ID
+}
+
+AABB :: struct {
+	min: mth.Vec3,
+	max: mth.Vec3,
+}
+
+Static_Render_Instance :: struct {
+	transform: mth.Transform,
+	model: Asset_ID,
+	material_override: GPU_Material_ID,
+//	flags: ..
 }

@@ -9,6 +9,7 @@
 // hands the slice to the BF_DAG Scheduler_Service via rawptr.
 package Core
 
+import "../Core"
 import "core:mem"
 
 // ============================================================================
@@ -30,12 +31,6 @@ System_Stage :: enum u32 {
 
 System_ID :: distinct u32
 
-INVALID_SYSTEM_ID :: System_ID(0)
-
-Access_Mask :: struct {
-	bits: u64,
-}
-
 System_Info :: struct {
 	read_mask:  Access_Mask,
 	write_mask: Access_Mask,
@@ -54,7 +49,7 @@ System_Entry :: struct {
 	info:     System_Info,
 	id:       System_ID,
 	name:     string,
-	callback: proc(rawptr),
+	callback: proc(_: rawptr),
 }
 
 System_Dependency :: struct {
@@ -135,17 +130,58 @@ Scheduler_Service :: struct {
 	// destroy tears the scheduler down. Called by the service registry
 	// via Service_Registration.destroy.
 	destroy:       proc(service: ^Scheduler_Service),
-	worker_count: proc(service: ^Scheduler_Service) -> int,
+	worker_count:  proc(service: ^Scheduler_Service) -> int,
 }
 
 //* HELPERS
-access_mask_empty :: proc() -> Access_Mask {
-	return Access_Mask{bits = 0}
-}
-access_mask_from_bits :: proc(bits: u64) -> Access_Mask {
-	return Access_Mask{bits = bits}
-}
 scheduler_service_worker_count :: proc(service: ^Scheduler_Service) -> int {
 	if service == nil || service.worker_count == nil do return 0
 	return service.worker_count(service)
+}
+
+//* ACCESS MASKS
+ACCESS_MASK_WORD_BITS :: 64
+ACCESS_MASK_WORD_COUNT :: 4
+ACCESS_MASK_CAPACITY :: ACCESS_MASK_WORD_BITS * ACCESS_MASK_WORD_COUNT
+
+Access_Mask :: struct {
+	words: [ACCESS_MASK_WORD_COUNT]u64,
+}
+
+access_mask_empty :: #force_inline proc() -> Access_Mask {
+	return {}
+}
+
+access_mask_from_bit :: #force_inline proc(bit_index: u32) -> Access_Mask {
+	assert(bit_index < ACCESS_MASK_CAPACITY, "Access mask bit index exceeds capacity")
+
+	mask := Access_Mask{}
+
+	word_index := bit_index / ACCESS_MASK_WORD_BITS
+	bit_index_in_word := bit_index % ACCESS_MASK_WORD_BITS
+
+	mask.words[word_index] = u64(1) << bit_index_in_word
+
+	return mask
+}
+
+access_mask_or :: #force_inline proc(dst: ^Access_Mask, src: Access_Mask) {
+	for i in 0 ..< ACCESS_MASK_WORD_COUNT {
+		dst.words[i] |= src.words[i]
+	}
+}
+
+access_mask_intersects :: #force_inline proc(a: Access_Mask, b: Access_Mask) -> bool {
+	for i in 0 ..< ACCESS_MASK_WORD_COUNT {
+		if (a.words[i] & b.words[i]) != 0 do return true
+	}
+	return false
+}
+
+access_mask_has_bit :: #force_inline proc(mask: Access_Mask, bit_index: u32) -> bool {
+	if bit_index >= ACCESS_MASK_CAPACITY do return false
+	word_index := bit_index / ACCESS_MASK_WORD_BITS
+	bit_index_in_word := bit_index % ACCESS_MASK_WORD_BITS
+
+	return (mask.words[word_index] & (u64(1) << bit_index_in_word)) != 0
 }
