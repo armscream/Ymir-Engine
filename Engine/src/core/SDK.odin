@@ -3,6 +3,7 @@ package Core
 
 import "core:log"
 import mth "BF_Math"
+import hm "core:container/handle_map"
 
 // **SDK - Public engine API.
 //
@@ -234,14 +235,24 @@ physics_raycast :: proc() -> bool {
 }
 
 //* SHARED TYPES
-Asset_ID :: distinct u64
+Asset_ID :: distinct u32 
 
-GPU_Model_ID :: distinct u32
-GPU_Mesh_ID :: distinct u32
-GPU_Material_ID :: distinct u32
+Scene_ID :: hm.Handle16
 
-Mode_Ref :: struct {
-	asset: Asset_ID
+Asset_Ref :: struct {
+	handle: Asset_ID, // or id 
+	type: Asset_Type,
+}
+
+Asset_Type :: enum u8 {
+	Unknown,
+	Model,
+	Mesh,
+	Material,
+	Texture,
+	Skeleton,
+	Animation,
+	Particle,
 }
 
 AABB :: struct {
@@ -249,9 +260,11 @@ AABB :: struct {
 	max: mth.Vec3,
 }
 
-Static_Render_Instance :: struct {
-	transform: mth.Transform,
-	model: Asset_ID,
-	material_override: GPU_Material_ID,
-//	flags: ..
+Render_Flags :: bit_set[Render_Flag]
+Render_Flag :: enum u8 {
+	None,
+}
+
+Material_Override :: struct {
+	// TBD: reference to override data/table
 }
