@@ -236,11 +236,11 @@ physics_raycast :: proc() -> bool {
 
 //* SHARED TYPES
 Asset_ID :: distinct u32 
-
+ASSET_INVALID :: Asset_ID(0)
 Scene_ID :: hm.Handle16
 
 Asset_Ref :: struct {
-	handle: Asset_ID, // or id 
+	id: Asset_ID, 
 	type: Asset_Type,
 }
 
@@ -250,14 +250,13 @@ Asset_Type :: enum u8 {
 	Mesh,
 	Material,
 	Texture,
+	Shader,
 	Skeleton,
 	Animation,
 	Particle,
-}
-
-AABB :: struct {
-	min: mth.Vec3,
-	max: mth.Vec3,
+	Audio,
+	Physics_Shape,
+	World,
 }
 
 Render_Flags :: bit_set[Render_Flag]
