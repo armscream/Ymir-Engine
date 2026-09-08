@@ -259,6 +259,22 @@ Asset_Type :: enum u8 {
 	World,
 }
 
+Model_Asset :: struct {
+	id: Asset_ID,
+	meshes: []Asset_Ref,
+	materials: []Asset_Ref,
+	skeleton: Asset_Ref,
+	bounds: mth.AABB,
+	flags: Model_Flags,
+}
+Model_Flags :: bit_set[Model_Flag]
+Model_Flag :: enum u8 {
+	Static,
+	Skinned,
+	Morph,
+	Instanced, //(arent they all instances ideally?)
+}
+
 Render_Flags :: bit_set[Render_Flag]
 Render_Flag :: enum u8 {
 	None,
