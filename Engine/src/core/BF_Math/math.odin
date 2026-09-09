@@ -3,6 +3,7 @@ package BF_Math
 Vec2 :: [2]f32
 Vec3 :: [3]f32
 Vec4 :: [4]f32
+Mat4 :: [16]f32
 
 World_Transform :: struct {
     local: Transform,

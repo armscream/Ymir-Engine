@@ -274,12 +274,3 @@ Model_Flag :: enum u8 {
 	Morph,
 	Instanced, //(arent they all instances ideally?)
 }
-
-Render_Flags :: bit_set[Render_Flag]
-Render_Flag :: enum u8 {
-	None,
-}
-
-Material_Override :: struct {
-	// TBD: reference to override data/table
-}

@@ -223,7 +223,7 @@ inject_default_project_settings :: proc() {
 	GLOBAL_PROJECT_SETTINGS.spatial_settings = DEFAULT_SPATIAL_SETTINGS
 
 	default_modules := []Project_Module {
-		{name = "BF_Renderer", version = BASEVERSION, enabled = true, required = true},
+		{name = "BF_GPU", version = BASEVERSION, enabled = true, required = true},
 		{name = "BF_DAG", version = BASEVERSION, enabled = true, required = true},
 		{name = "BF_ECS", version = BASEVERSION, enabled = true, required = true},
 		{name = "BF_REP", version = BASEVERSION, enabled = true, required = true},
