@@ -27,7 +27,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 
-import toml "../../ext/toml_serializer"
+import toml "../../dependencies/toml_serializer"
 
 // ------------------------------------------------------------------------
 // Extract_Error

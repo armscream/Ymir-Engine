@@ -49,10 +49,7 @@ main :: proc() {
 }
 
 
-// ============================================================================
-// ENGINE_APPLICATION_INTERFACE
-// ============================================================================
-//
+//* ENGINE_APPLICATION_INTERFACE
 // The application fills this struct in once, before Engine.init, and the
 // engine calls each hook at the appropriate point in the lifecycle.
 //
@@ -66,10 +63,8 @@ APP: Engine.Engine_App_Interface = Engine.Engine_App_Interface {
 	on_shutdown = on_shutdown,
 }
 
-// ============================================================================
-// APPLICATION STATE
-// ============================================================================
-//
+//* APPLICATION STATE
+// 
 // Game-side state the sample "gameplay" code reaches for. Real games
 // would put their own structs here; this is the bare minimum that proves
 // the DAG is firing per-frame.
@@ -82,10 +77,9 @@ LAST_DT:         f32
 // the sample system can reach it without an extra lookup.
 ECS_WORLD: rawptr
 
-// ============================================================================
-// HOOKS
-// ============================================================================
 
+//* HOOKS
+//
 on_init :: proc() {
 	fmt.println("[App] on_init: registering game systems + fetching ECS world")
 
@@ -105,7 +99,6 @@ on_init :: proc() {
 		game_system_input,
 		Engine.System_Info{
 			stage = .PreUpdate,
-			flags = 0,
 		},
 	)
 
@@ -116,7 +109,6 @@ on_init :: proc() {
 		game_system_physics,
 		Engine.System_Info{
 			stage = .PreUpdate,
-			flags = 0,
 		},
 	)
 
@@ -129,25 +121,17 @@ on_init :: proc() {
 on_pre_tick :: proc(dt: f32, frame_index: u64) {
 	LAST_DT = dt
 	LAST_FRAME_INDEX = frame_index
-	// Cheap way to demonstrate the hook is firing: every 60 frames,
-	// log progress.
-	if frame_index % 60 == 0 {
-		fmt.printf("[App] pre_tick frame=%d dt=%.4f ticks=%d\n", frame_index, dt, TICK_COUNT)
-	}
 
-	// First invocation only: print a one-shot so the loop is visibly
-	// running.
+	// First invocation only: print a one-shot so the loop is visibly running.
 	if frame_index == 1 {
 		fmt.println("[App] pre_tick fired for the first time")
 	}
 }
 
 on_present :: proc(dt: f32, frame_index: u64) {
-	// Quit after a small number of frames so the demo terminates
-	// without spamming logs forever. Set higher (or remove) to run
-	// longer.
-	if frame_index >= 30 {
-		fmt.println("[App] present reached frame_index 30 — quitting")
+	// Quit after a small number of frames so the demo terminates.
+	if frame_index >= 3000000 {
+		fmt.println("[App] present reached frame_index 3,000,000 — quitting")
 		Engine.engine_quit()
 	}
 }
@@ -157,10 +141,7 @@ on_shutdown :: proc() {
 	ECS_WORLD = nil
 }
 
-// ============================================================================
-// SYSTEM CALLBACKS
-// ============================================================================
-//
+//* SYSTEM CALLBACKS
 // Each proc(rawptr) is invoked by the DAG scheduler on whatever worker
 // thread claimed the node. The ctx points at a Scheduler_Frame whose
 // lifetime is bounded by the Engine.run loop's frame iteration. Don't

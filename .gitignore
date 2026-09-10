@@ -1,8 +1,9 @@
 Project/bin
-Project/rbs/rune.exe
+Project/rbs/.rcp-cache
 Project/rune.exe
 .kilo
 Tests
-Engine/src/Modules/BF_DAG/
-Engine/src/Modules/BF_ECS/
+Engine/src/Modules/
+Engine/src/Extensions/
 Bifrost Engine.code-workspace
+Plans

@@ -11,7 +11,7 @@ import "core:time"
 import hm "core:container/handle_map"
 
 // ============================================================================
-// GLOBAL REGISTRIES / MANAGERS
+//* GLOBAL REGISTRIES / MANAGERS
 //
 // Engine-owned singletons. All manager init/destroy is driven from
 // engine.init / engine.destroy in this file.
@@ -32,6 +32,62 @@ GLOBAL_SERVICE_REGISTRY:  Service_Registry
 GLOBAL_RESOURCE_REGISTRY: Resource_Registry
 @(private)
 GLOBAL_EVENT_REGISTRY:    Event_Registry
+
+// ============================================================================
+//* QUIT PROVIDERS
+//
+// Modules can ask the engine to exit without taking a Core dependency.
+// Each provider is a no-arg proc returning true when the module wants the
+// run loop to terminate (e.g. window-close received, gameplay requested
+// shutdown). The engine calls them once per frame at the top of the
+// run loop; any provider returning true sets ENGINE_RUNNING = false.
+//
+// Core stays decoupled from any specific module - the registry just
+// stores opaque (name, callback) pairs.
+// ============================================================================
+
+Quit_Request_Provider :: struct {
+	name:    string,
+	request: proc() -> bool,
+}
+
+@(private)
+GLOBAL_QUIT_PROVIDERS: [dynamic]Quit_Request_Provider
+
+// engine_register_quit_provider installs a quit request callback under
+// `name`. Duplicate names are rejected (the first registration wins).
+// Returns false if request is nil or name is already registered.
+engine_register_quit_provider :: proc(name: string, request: proc() -> bool) -> bool {
+	if request == nil do return false
+	if len(name) == 0 do return false
+	for p in GLOBAL_QUIT_PROVIDERS {
+		if p.name == name {
+			log.warnf("[Engine] quit provider '%s' already registered", name)
+			return false
+		}
+	}
+	append(&GLOBAL_QUIT_PROVIDERS, Quit_Request_Provider{name = name, request = request})
+	return true
+}
+
+// engine_unregister_quit_provider removes a previously registered quit
+// provider by name. Returns true if a provider was removed.
+engine_unregister_quit_provider :: proc(name: string) -> bool {
+	for p, i in GLOBAL_QUIT_PROVIDERS {
+		if p.name == name {
+			ordered_remove(&GLOBAL_QUIT_PROVIDERS, i)
+			return true
+		}
+	}
+	return false
+}
+
+// engine_poll_quit returns true if any registered quit provider asked
+// the engine to stop. Called once per frame at the top of run().
+engine_poll_quit :: proc() -> bool {
+	for p in GLOBAL_QUIT_PROVIDERS {if p.request != nil && p.request() do return true}
+	return false
+}
 
 // Rollback_Op is the entry pushed onto engine.init's rollback stack
 // when a subsystem successfully starts. On failure, the deferred
@@ -107,6 +163,10 @@ init :: proc(app: ^Engine_App_Interface, run_editor: bool) -> bool {
 	if !registry_init_with_rollback(&rollback, rawptr(&GLOBAL_RESOURCE_REGISTRY), context.allocator, .RK_Resource) do return false
 	if !registry_init_with_rollback(&rollback, rawptr(&GLOBAL_EVENT_REGISTRY), context.allocator, .RK_Event) do return false
 
+	// Quit providers list. Modules register their (name, callback)
+	// during module_register; the run loop polls them per frame.
+	GLOBAL_QUIT_PROVIDERS = make([dynamic]Quit_Request_Provider, context.allocator)
+
 	// MODULES
 	if !component_manager_load_project(&GLOBAL_MODULE_MANAGER, GLOBAL_PROJECT_SETTINGS.modules) do return false
 	if !component_manager_resolve(&GLOBAL_MODULE_MANAGER) do return false
@@ -149,8 +209,7 @@ init :: proc(app: ^Engine_App_Interface, run_editor: bool) -> bool {
 }
 
 // registry_kind is a tag for the four kinds of subsystem init paths.
-// Distinct from Component_Kind so the names don't shadow the manager
-// types.
+// Distinct from Component_Kind so the names don't shadow the manager types.
 registry_kind :: enum {
 	RK_Module,
 	RK_Extension,
@@ -192,9 +251,6 @@ registry_init_with_rollback :: proc(
 	return true
 }
 
-// (mgr_*_to_registry helpers removed — registry_init_with_rollback
-// now accepts rawptr and casts at the call site.)
-
 engine_quit :: proc() {
 	ENGINE_RUNNING = false
 }
@@ -222,7 +278,15 @@ run :: proc() {
 	// first iteration so the first dt only measures time since init.
 	first_frame := true
 
-	for ENGINE_RUNNING {
+	ENGINE_RUN: for ENGINE_RUNNING {
+		// Poll module-owned quit providers (window close, engine
+		// shutdown request, ...). If any returns true, drop out before
+		// doing any frame work. Modules register these via the SDK;
+		// Core never imports the module packages themselves.
+		if engine_poll_quit() {
+			break ENGINE_RUN
+		}
+
 		now_tick := time.tick_now()
 		if first_frame {
 			last_tick = now_tick
@@ -316,6 +380,7 @@ destroy :: proc() -> bool {
 
 	engine_world_handle = {}
 	engine_self_handle = {}
+	delete(GLOBAL_QUIT_PROVIDERS)
 	GLOBAL_APP_INTERFACE = nil
 
 	log.destroy_console_logger(context.logger)
@@ -458,9 +523,7 @@ scheduler_start_workers :: proc() -> bool {
 }
 
 scheduler_shutdown :: proc() {
-	if GLOBAL_SCHEDULER_SERVICE == nil {
-		return
-	}
+	if GLOBAL_SCHEDULER_SERVICE == nil do return
 	GLOBAL_SCHEDULER_SERVICE = nil
 }
 

@@ -80,6 +80,10 @@ Renderer_Settings :: struct {
 	// --- Animation ---
 	animation_quantization: Animation_Quantization,
 	bone_weight_format:     Quantization_Level,
+
+	// --- WINDOW ---
+	Window_Width:           u32,
+	Window_Height:          u32,
 }
 
 Spatial_Settings :: struct {
@@ -88,10 +92,7 @@ Spatial_Settings :: struct {
 	cell_size:  f32, // world meters per cell
 }
 
-
-// ============================================================================
-// PROJECT SETTINGS (TOML)
-// ============================================================================
+//* PROJECT SETTINGS (TOML)
 Project_Settings :: struct {
 	project_name:      string,
 	version:           Version,
@@ -105,11 +106,11 @@ Project_Settings :: struct {
 // Project_Module / Project_Extension / Project_Plugin are now
 // Component_Project_Entry under the hood. Kept as type aliases so
 // any existing call sites that named the old types still compile.
-Project_Module    :: Component_Project_Entry
+Project_Module :: Component_Project_Entry
 Project_Extension :: Component_Project_Entry
-Project_Plugin    :: Component_Project_Entry
+Project_Plugin :: Component_Project_Entry
 // ===============================
-// GLOBAL STATE
+//* GLOBAL STATE
 //
 // Engine-owned singleton. All manager init/destroy is driven from
 // engine.init / engine.destroy in engine.odin.
@@ -119,7 +120,7 @@ Project_Plugin    :: Component_Project_Entry
 // Mutation goes through engine.init's setup path or through a future
 // settings-API surface (see TODO(settings-mutation)).
 // ===============================
-@(private)
+
 GLOBAL_PROJECT_SETTINGS := Project_Settings{}
 
 // project_settings_get returns a pointer to the engine's live
@@ -171,7 +172,7 @@ renderer_settings_from_lib :: proc(lib_ctx: ^Lib_Context) -> ^Renderer_Settings 
 // read-only outside of engine.init.
 
 // ========================
-// DEFAULT PROJECT SETTINGS
+//* DEFAULT PROJECT SETTINGS
 //
 // `inject_default_project_settings` is exposed publicly so the build tool
 // (Project/rbs/rbs.odin) can seed Core's in-memory defaults when
@@ -200,6 +201,8 @@ DEFAULT_RENDERER_SETTINGS := Renderer_Settings {
 		scale = .U8,
 	},
 	bone_weight_format = .U8,
+	Window_Width = 600,
+	Window_Height = 800,
 }
 
 DEFAULT_SPATIAL_SETTINGS := Spatial_Settings {
@@ -226,8 +229,8 @@ inject_default_project_settings :: proc() {
 		{name = "BF_GPU", version = BASEVERSION, enabled = true, required = true},
 		{name = "BF_DAG", version = BASEVERSION, enabled = true, required = true},
 		{name = "BF_ECS", version = BASEVERSION, enabled = true, required = true},
-		{name = "BF_REP", version = BASEVERSION, enabled = true, required = true},
-		{name = "BF_Input", version = BASEVERSION, enabled = false},
+		{name = "BF_REP", version = BASEVERSION, enabled = false},
+		{name = "BF_Input", version = BASEVERSION, enabled = true, required = true},
 		{name = "BF_Miniaudio", version = BASEVERSION, enabled = false},
 		{name = "BF_Box3D_Physics", version = BASEVERSION, enabled = false},
 		{name = "ATLAS-RMGUI", version = BASEVERSION, enabled = false},
@@ -240,7 +243,7 @@ inject_default_project_settings :: proc() {
 	}
 
 	default_extensions := []Project_Extension {
-		{name = "Example_Extension", version = BASEVERSION, enabled = false},
+		{name = "BF_GPU_Mesh", version = BASEVERSION, enabled = false},
 	}
 	for e in default_extensions {
 		append(&GLOBAL_PROJECT_SETTINGS.extensions, e)
@@ -254,9 +257,7 @@ inject_default_project_settings :: proc() {
 	}
 }
 
-// ============================================================================
-// TOML LOAD
-// ============================================================================
+//* TOML LOAD
 @(private)
 project_config_path :: proc(allocator := context.allocator) -> (string, bool) {
 	exe_dir, err := os.get_executable_directory(allocator)
@@ -333,8 +334,7 @@ cleanup_project_settings :: proc(s: ^Project_Settings) {
 	s.plugins = nil
 }
 
-// ============================================
-// TOML WRITE (default project.toml generation)
+//* TOML WRITE (default project.toml generation)
 @(private)
 setup_default_project_settings_toml :: proc() -> bool {
 	exe_dir, err := os.get_executable_directory(context.allocator)

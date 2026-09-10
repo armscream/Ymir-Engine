@@ -7,7 +7,7 @@ import "core:path/filepath"
 import "core:strings"
 
 import "../../Engine/src/Tools/rbs"
-import toml "../../Engine/src/ext/toml_parser"
+import toml "../../Engine/src/dependencies/toml_parser"
 
 import "../../Engine/src/Core"
 
@@ -710,6 +710,98 @@ copy_project_assets :: proc(profile: rbs.Profile) {
 
 
 // ============================================================================
+// NATIVE RUNTIME LIBRARIES (SDL3.dll)
+// ============================================================================
+//
+// Modules built against `vendor:sdl3` link against `SDL3.lib` at build
+// time, but at runtime the resulting DLL has a soft dependency on
+// `SDL3.dll`. The Windows DLL loader searches:
+//   1. The directory of the loaded module (bin/<config>/)
+//   2. The current working directory
+//   3. System directories + PATH
+//
+// Running the engine from the project root with CWD != bin/<config>
+// makes #1 miss and #2 unreliable. The safest fix is to deploy SDL3.dll
+// into the profile output directory alongside the built engine binary.
+//
+// On Linux/macOS `vendor:sdl3` links against `system:SDL3` (no DLL to
+// copy), so this step is a no-op there.
+
+// find_odin_root locates the Odin installation by running `odin root`
+// and reading stdout. Returns "" on failure. Prefer the ODIN_ROOT env
+// var if set (some CI / package managers set it explicitly).
+@(private)
+find_odin_root :: proc() -> string {
+	if env_root, ok := os.lookup_env_alloc("ODIN_ROOT", context.allocator); ok {
+		defer delete(env_root)
+		root := strings.trim_space(env_root)
+		if len(root) > 0 do return root
+	}
+
+	stdout_r, stdout_w, _ := os.pipe()
+	defer os.close(stdout_r)
+
+	p, start_err := os.process_start({
+		command = {"odin", "root"},
+		stdout  = stdout_w,
+	})
+	if start_err != nil do return ""
+
+	state, _ := os.process_wait(p)
+	os.close(stdout_w)
+	if state.exit_code != 0 do return ""
+
+	buf: [4096]u8
+	n, read_err := os.read(stdout_r, buf[:])
+	if read_err != nil || n <= 0 do return ""
+
+	// `odin root` prints the path with a trailing newline; strip it.
+	return strings.trim_space(string(buf[:n]))
+}
+
+// copy_sdl3_runtime copies SDL3.dll from `<odin_root>/vendor/sdl3/` to
+// `<profile.output>/`. Silently no-ops if the source file doesn't
+// exist (e.g. platforms where SDL3 is system-linked rather than
+// vendored). Logs a warning and returns on copy failure so a missing
+// DLL doesn't fail the build outright.
+copy_sdl3_runtime :: proc(profile: rbs.Profile) {
+	fmt.println("")
+	fmt.println("--------------------------------------------------")
+	fmt.println("Copying native runtime libraries")
+	fmt.println("--------------------------------------------------")
+
+	root := find_odin_root()
+	if len(root) == 0 {
+		fmt.println("  [warn] could not locate Odin root (ODIN_ROOT / `odin root` failed); SDL3.dll not deployed")
+		return
+	}
+
+	src_path: string
+	src_path, _ = filepath.join({root, "vendor", "sdl3", "SDL3.dll"}, context.allocator)
+	defer delete(src_path)
+
+	if !os.exists(src_path) {
+		// Not all Odin installs ship the sdl3 vendor directory (e.g.
+		// older builds, custom installs). On Linux/macOS the SDL3
+		// binding links via system:SDL3 so there's nothing to copy.
+		fmt.printfln("  [skip] %s not found (system-linked or non-vendored SDL3)", src_path)
+		return
+	}
+
+	dst_path: string
+	dst_path, _ = filepath.join({profile.output, "SDL3.dll"}, context.allocator)
+	defer delete(dst_path)
+
+	if copy_err := os.copy_file(dst_path, src_path); copy_err != nil {
+		fmt.eprintf("  [warn] failed to copy SDL3.dll (%s -> %s): %s\n", src_path, dst_path, copy_err)
+		return
+	}
+
+	fmt.printfln("  %s -> %s", src_path, dst_path)
+}
+
+
+// ============================================================================
 // VERIFY MANIFESTS
 // ============================================================================
 //
@@ -785,11 +877,15 @@ pre_build_debug :: proc(ctx: rbs.Context, profile: rbs.Profile) {
 
 	build_plugins(&project_config, profile)
 
+	compile_shaders(profile)
+
 	copy_project_config(profile)
 
 	copy_project_scripts(profile)
 
 	copy_project_assets(profile)
+
+	copy_sdl3_runtime(profile)
 }
 
 
@@ -810,11 +906,15 @@ pre_build_editor :: proc(ctx: rbs.Context, profile: rbs.Profile) {
 
 	build_plugins(&project_config, profile)
 
+	compile_shaders(profile)
+
 	copy_project_config(profile)
 
 	copy_project_scripts(profile)
 
 	copy_project_assets(profile)
+
+	copy_sdl3_runtime(profile)
 }
 
 
@@ -835,11 +935,15 @@ pre_build_release :: proc(ctx: rbs.Context, profile: rbs.Profile) {
 
 	build_plugins(&project_config, profile)
 
+	compile_shaders(profile)
+
 	copy_project_config(profile)
 
 	copy_project_scripts(profile)
 
 	copy_project_assets(profile)
+
+	copy_sdl3_runtime(profile)
 }
 
 

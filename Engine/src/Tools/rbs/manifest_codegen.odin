@@ -21,7 +21,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 
-import toml "../../ext/toml_serializer"
+import toml "../../dependencies/toml_serializer"
 
 manifest_codegen_run :: proc(ctx: Context, profile: Profile) {
     _ = ctx
@@ -165,8 +165,10 @@ _codegen_package :: proc(pkg_dir: string, check_only: bool) -> (bool, bool) {
 
 // _find_entry_source locates the canonical package source file. Convention:
 //
-//     1. <PackageName>.odin where PackageName matches the directory name.
-//     2. First .odin file in the directory otherwise.
+//     1. Mod.odin (or mod.odin for case-insensitive filesystems) - the
+//        standard module/extension entry source across the engine.
+//     2. <PackageName>.odin where PackageName matches the directory name.
+//     3. First .odin file in the directory otherwise.
 //
 // Returns the absolute path or an empty string when none exists.
 @(private)
@@ -179,16 +181,23 @@ _find_entry_source :: proc(pkg_dir: string) -> (string, bool) {
     if rerr != nil do return "", false
 
     pkg_name := filepath.base(pkg_dir)
-    canonical := fmt.tprintf("%s.odin", pkg_name)
+    canonical_pkg := fmt.tprintf("%s.odin", pkg_name)
+    // Recognised canonical entry sources, in priority order. Mod.odin
+    // is the actual convention used throughout the engine; the
+    // package-name variant is kept as a fallback for packages that
+    // prefer <Name>.odin over Mod.odin.
+    canonical_names := []string{"Mod.odin", "mod.odin", canonical_pkg}
     first_other := ""
 
     for entry in entries {
         if entry.type != .Regular do continue
         name := entry.name
         if !strings.has_suffix(name, ".odin") do continue
-        if name == canonical {
-            joined, _ := filepath.join({pkg_dir, name})
-            return joined, true
+        for c in canonical_names {
+            if name == c {
+                joined, _ := filepath.join({pkg_dir, name})
+                return joined, true
+            }
         }
         if first_other == "" {
             joined, _ := filepath.join({pkg_dir, name})

@@ -91,6 +91,7 @@ Lib_Type :: enum u32 {
 	Replication,
 	Editor,
 	Debug,
+	Renderer_Extension,
 	Other,
 }
 

@@ -9,7 +9,6 @@
 // hands the slice to the BF_DAG Scheduler_Service via rawptr.
 package Core
 
-import "../Core"
 import "core:mem"
 
 // ============================================================================
