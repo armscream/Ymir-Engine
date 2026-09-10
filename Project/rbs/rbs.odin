@@ -8,6 +8,7 @@ import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:thread"
+import "core:time"
 
 import "../../Engine/src/Tools/rbs"
 import toml "../../Engine/src/dependencies/toml_parser"
@@ -546,6 +547,114 @@ should_build_module :: proc(name: string, enabled: bool, profile_output: string)
 
 
 // ============================================================================
+// STALE-SOURCE CHECK
+// ============================================================================
+//
+// Odin has no incremental linker on Windows — every `odin build -build-mode:dll`
+// re-runs the full link (~3-4s per DLL on this machine) even when nothing
+// changed. We side-step that by comparing the source tree's mtime to the
+// output DLL's mtime: if every .odin file is older than the .dll, we skip
+// the odin invocation entirely. Warm rebuilds used to take ~17s of pure
+// linker work; with this they take 0s for any unchanged module.
+//
+// Set RUNE_FORCE_REBUILD=1 to disable the optimisation (debug rbs itself).
+//
+// Trade-off: this walks the source dir on every build. For the engine's
+// small modules (a few hundred files each) that's a few ms — well under
+// the 3-4s saved per skipped module. The check is shallow: mtime only,
+// not content hash, so a `touch` to a source file triggers a rebuild
+// even if content is unchanged. That's the right behaviour for rbs.
+
+SOURCE_EXTS :: []string{".odin"}
+
+walk_max_source_mtime :: proc(root: string) -> time.Time {
+	// time.Time zero value is "very old" — safe as initial accumulator.
+	max_mt: time.Time
+
+	// os.read_all_directory_by_path on Windows returns garbled UTF-16
+	// bytes when given a relative path. Walk an absolute root so the
+	// comparison is reliable across platforms.
+	abs_root, aerr := filepath.abs(root, context.allocator)
+	if aerr != nil do return max_mt
+	defer delete(abs_root)
+
+	stack: [dynamic]string
+	defer delete(stack)
+	append(&stack, abs_root)
+
+	for len(stack) > 0 {
+		dir := pop(&stack)
+		entries, err := os.read_all_directory_by_path(dir, context.allocator)
+		if err != nil do continue
+		if len(entries) == 0 do continue
+		for e in entries {
+			full, jerr := filepath.join({dir, e.name}, context.allocator)
+			if jerr != nil {
+				os.file_info_delete(e, context.allocator)
+				continue
+			}
+			if e.type == .Directory {
+				// Skip rbs/rcc/rcp build-time caches and version-control
+				// dirs so a stray git checkout doesn't trigger a rebuild.
+				base := e.name
+				if base == ".git" || base == ".odin-cache" || base == "bin" || base == "node_modules" {
+					os.file_info_delete(e, context.allocator)
+					delete(full)
+					continue
+				}
+				append(&stack, full)
+			} else if e.type == .Regular {
+				ext := filepath.ext(e.name)
+				match := false
+				for s in SOURCE_EXTS do if ext == s { match = true; break }
+				if !match {
+					delete(full)
+					os.file_info_delete(e, context.allocator)
+					continue
+				}
+				// Modtime comparison: any newer file wins.
+				// Empirically time.diff(max_mt, e) > 0 when e > max_mt.
+				if time.diff(max_mt, e.modification_time) > 0 {
+					max_mt = e.modification_time
+				}
+				delete(full)
+			}
+			os.file_info_delete(e, context.allocator)
+		}
+		delete(entries)
+	}
+	return max_mt
+}
+
+@(private)
+forced_rebuild :: proc() -> bool {
+	v := os.get_env("RUNE_FORCE_REBUILD", context.allocator)
+	defer if len(v) > 0 do delete(v)
+	return len(v) > 0
+}
+
+needs_rebuild :: proc(source_dir, output_dll: string) -> bool {
+	if forced_rebuild() do return true
+
+	// No prior build → must build.
+	dll_info, dll_err := os.stat(output_dll, context.allocator)
+	if dll_err != nil do return true
+	defer os.file_info_delete(dll_info, context.allocator)
+
+	// No sources → can't tell; rebuild to be safe.
+	src_max := walk_max_source_mtime(source_dir)
+	// A zero Time means we found nothing .odin — fall back to rebuild.
+	// time.diff(zero, zero) returns a non-negative zero duration, so
+	// comparing to zero is the natural "is this still the zero value" check.
+	if time.diff(src_max, {}) == 0 do return true
+
+	// Source newer than DLL → rebuild. Older → skip.
+	if time.diff(dll_info.modification_time, src_max) > 0 do return true
+	return false
+}
+
+
+// ============================================================================
 // BUILD MODULES / EXTENSIONS / PLUGINS (parallel)
 // ============================================================================
 //
@@ -560,14 +669,47 @@ should_build_module :: proc(name: string, enabled: bool, profile_output: string)
 // the speed tradeoff.
 
 Build_Job :: struct {
-	name:    string,
-	kind:    string, // "module" | "extension" | "plugin"
-	profile: rbs.Profile,
+	name:       string,
+	kind:       string, // "module" | "extension" | "plugin"
+	profile:    rbs.Profile,
+	source_dir: string, // resolved source directory; used by needs_rebuild
 }
 
 Build_Job_Context :: struct {
 	jobs:     ^[dynamic]Build_Job,
 	next_idx: ^int,
+}
+
+resolve_job_source :: proc(kind, name: string) -> string {
+	#no_bounds_check switch kind {
+	case "module":   return resolve_module_source(name)
+	case "extension": return resolve_extension_source(name)
+	case "plugin":   return resolve_plugin_source(name)
+	}
+	return ""
+}
+
+// dispatch_job runs the stale-source check and either invokes the
+// matching build_* proc or prints a cached line. Used by both the
+// single-worker fast path and the parallel worker loop.
+dispatch_job :: proc(job: ^Build_Job) {
+	dll_rel := join_project_path(job.profile.output, fmt.tprintf("%s.dll", job.name))
+	dll_abs, _ := filepath.abs(dll_rel, context.allocator)
+	defer delete(dll_abs)
+
+	if !needs_rebuild(job.source_dir, dll_abs) {
+		fmt.printfln("  [cached] %s.dll (no source changes)", job.name)
+		return
+	}
+
+	#no_bounds_check switch job.kind {
+	case "module":
+		build_module(job.name, job.profile)
+	case "extension":
+		build_extension(job.name, job.profile)
+	case "plugin":
+		build_plugin(job.name, job.profile)
+	}
 }
 
 build_job_worker :: proc(ctx: Build_Job_Context) {
@@ -578,14 +720,7 @@ build_job_worker :: proc(ctx: Build_Job_Context) {
 		idx := sync.atomic_add(ctx.next_idx, 1)
 		if idx >= len(ctx.jobs^) do return
 		job := &ctx.jobs^[idx]
-		#no_bounds_check switch job.kind {
-		case "module":
-			build_module(job.name, job.profile)
-		case "extension":
-			build_extension(job.name, job.profile)
-		case "plugin":
-			build_plugin(job.name, job.profile)
-		}
+		dispatch_job(job)
 	}
 }
 
@@ -593,15 +728,18 @@ collect_build_jobs :: proc(settings: ^Core.Project_Settings, profile: rbs.Profil
 	jobs: [dynamic]Build_Job
 	for m in settings.modules {
 		if !should_build_module(m.name, m.enabled, profile.output) do continue
-		append(&jobs, Build_Job{m.name, "module", profile})
+		src := resolve_module_source(m.name)
+		append(&jobs, Build_Job{m.name, "module", profile, src})
 	}
 	for e in settings.extensions {
 		if !e.enabled do continue
-		append(&jobs, Build_Job{e.name, "extension", profile})
+		src := resolve_extension_source(e.name)
+		append(&jobs, Build_Job{e.name, "extension", profile, src})
 	}
 	for p in settings.plugins {
 		if !p.enabled do continue
-		append(&jobs, Build_Job{p.name, "plugin", profile})
+		src := resolve_plugin_source(p.name)
+		append(&jobs, Build_Job{p.name, "plugin", profile, src})
 	}
 	return jobs
 }
@@ -618,18 +756,151 @@ detect_parallelism :: proc() -> int {
 	return 8
 }
 
+// ============================================================================
+// EXE STALE-SOURCE CHECK
+// ============================================================================
+//
+// The final exe links against every DLL's import library (.lib) plus
+// Project/main.odin's own source tree. If none of those have been
+// touched since the exe was built, skip the odin invocation that
+// would otherwise re-link for ~3-4s.
+//
+// We compare the maximum mtime of any tracked dependency against the
+// exe's mtime. Tracked dependencies:
+//   1. Project/*.odin (the project source tree; excludes rbs/, bin/, etc.)
+//   2. <output>/*.lib (every DLL import library produced by step 1)
+
+EXE_TRACKED_EXTS :: []string{".odin", ".lib"}
+
+exe_max_dep_mtime :: proc(project_root, profile_output: string) -> time.Time {
+	max_mt: time.Time
+
+	// Walk Project/ source files.
+	proj_abs, _ := filepath.abs(project_root, context.allocator)
+	defer delete(proj_abs)
+	stack: [dynamic]string
+	defer delete(stack)
+	append(&stack, proj_abs)
+
+	for len(stack) > 0 {
+		dir := pop(&stack)
+		entries, err := os.read_all_directory_by_path(dir, context.allocator)
+		if err != nil do continue
+		for e in entries {
+			full, jerr := filepath.join({dir, e.name}, context.allocator)
+			if jerr != nil {
+				os.file_info_delete(e, context.allocator)
+				continue
+			}
+			if e.type == .Directory {
+				base := e.name
+				if base == ".git" || base == ".odin-cache" || base == "bin" || base == "rbs" || base == "config" || base == "scripts" || base == "assets" || base == "node_modules" {
+					os.file_info_delete(e, context.allocator)
+					delete(full)
+					continue
+				}
+				append(&stack, full)
+			} else if e.type == .Regular {
+				ext := filepath.ext(e.name)
+				match := false
+				for s in EXE_TRACKED_EXTS do if ext == s { match = true; break }
+				if !match {
+					delete(full)
+					os.file_info_delete(e, context.allocator)
+					continue
+				}
+				if time.diff(max_mt, e.modification_time) > 0 {
+					max_mt = e.modification_time
+				}
+				delete(full)
+			}
+			os.file_info_delete(e, context.allocator)
+		}
+		delete(entries)
+	}
+
+	// Also check the DLL .lib files — the exe links each one.
+	out_abs, _ := filepath.abs(profile_output, context.allocator)
+	defer delete(out_abs)
+	libs, lerr := os.read_all_directory_by_path(out_abs, context.allocator)
+	if lerr == nil {
+		for e in libs {
+			if e.type != .Regular do continue
+			ext := filepath.ext(e.name)
+			match := ext == ".lib"
+			if !match do continue
+			if time.diff(max_mt, e.modification_time) > 0 {
+				max_mt = e.modification_time
+			}
+		}
+		delete(libs)
+	}
+
+	return max_mt
+}
+
+needs_exe_rebuild :: proc(profile: rbs.Profile) -> bool {
+	if forced_rebuild() do return true
+
+	// Exe path: <output>/<project_name>.exe — matches the pattern
+	// used by rbs.exec_odin_cmd to write the exe.
+	exe_name := fmt.tprintf("%s%s", profile.name, exe_ext_for(profile))
+	exe_rel := join_project_path(profile.output, exe_name)
+	exe_abs, _ := filepath.abs(exe_rel, context.allocator)
+	defer delete(exe_abs)
+
+	exe_info, err := os.stat(exe_abs, context.allocator)
+	if err != nil do return true
+	defer os.file_info_delete(exe_info, context.allocator)
+
+	// Project source root is `..` from CWD=Project/rbs.
+	project_root := ".."
+	dep_max := exe_max_dep_mtime(project_root, profile.output)
+	if time.diff(dep_max, {}) == 0 do return true
+
+	// If any dependency is newer than the exe, rebuild.
+	// Empirically: time.diff(exe, dep) > 0 when dep > exe (newer).
+	if time.diff(exe_info.modification_time, dep_max) > 0 do return true
+	return false
+}
+
+// exe_ext_for returns the platform-correct binary extension. Mirrors
+// rbs.exec_odin's get_extension but is duplicated here so the cache
+// check doesn't have to depend on a private rbs helper.
+exe_ext_for :: proc(profile: rbs.Profile) -> string {
+	#partial switch profile.os {
+	case .Windows: return ".exe"
+	case .Linux, .Darwin: return ""
+	}
+	return ".exe"
+}
+
+// Wrapped exec_odin_cmd that skips the odin invocation when the exe is
+// already up-to-date. Falls through to the rbs default for everything
+// else (Run command, errors, missing exe, etc).
+exec_odin_cmd_cached :: proc(ctx: rbs.Context, cmd: rbs.Odin_Command, profile: rbs.Profile) -> rbs.Error {
+	// Only the Build command is cacheable this way — Run always
+	// needs a fresh exe (it loads the result into memory).
+	if cmd == .Build && !needs_exe_rebuild(profile) {
+		exe_name := fmt.tprintf("%s%s", profile.name, exe_ext_for(profile))
+		exe_path := join_project_path(profile.output, exe_name)
+		fmt.printfln("  [cached] %s (no project or DLL changes)", exe_path)
+		return nil
+	}
+	return rbs.exec_odin_cmd(ctx, cmd, profile)
+}
+
+
 run_build_jobs_parallel :: proc(jobs_in: [dynamic]Build_Job, parallelism: int) {
 	n := parallelism
 	if n < 1 do n = 1
 	if n > len(jobs_in) do n = len(jobs_in)
 	if n == 1 {
-		// Single-worker fast path — no thread overhead.
-		for j in jobs_in {
-			#no_bounds_check switch j.kind {
-			case "module":   build_module(j.name, j.profile)
-			case "extension":build_extension(j.name, j.profile)
-			case "plugin":   build_plugin(j.name, j.profile)
-			}
+		// Single-worker fast path — no thread overhead. dispatch_job
+		// runs the needs_rebuild check first so the cache hit works
+		// for the n==1 case too.
+		for i in 0 ..< len(jobs_in) {
+			dispatch_job(&jobs_in[i])
 		}
 		return
 	}
@@ -1213,12 +1484,12 @@ main :: proc() {
 	rbs.add_command(&ctx, "run", proc(ctx: rbs.Context, profile: rbs.Profile) {
 		rbs.exec_odin_cmd(ctx, .Run, profile)
 	})
-
 	// ========================================================================
 	// BUILD COMMAND
 	// ========================================================================
+
 	rbs.add_command(&ctx, "build", proc(ctx: rbs.Context, profile: rbs.Profile) {
-		rbs.exec_odin_cmd(ctx, rbs.Odin_Command.Build, profile)
+		exec_odin_cmd_cached(ctx, rbs.Odin_Command.Build, profile)
 	})
 
 // ========================================================================
