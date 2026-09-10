@@ -242,6 +242,7 @@ CORE_LIB_INTERFACE_SERVICE_REGISTRY        :: "service_registry"
 CORE_LIB_INTERFACE_RESOURCE_REGISTRY       :: "resource_registry"
 CORE_LIB_INTERFACE_EVENT_REGISTRY          :: "event_registry"
 CORE_LIB_INTERFACE_PROJECT_SETTINGS        :: "project_settings"
+CORE_LIB_INTERFACE_ENGINE_STATE            :: "engine_state"
 
 COMPONENT_REGISTRATION_API_VERSION :: u32(1)
 COMPONENT_CONTEXT_API_VERSION      :: u32(1)
@@ -250,6 +251,46 @@ SERVICE_REGISTRY_API_VERSION       :: u32(1)
 RESOURCE_REGISTRY_API_VERSION      :: u32(1)
 EVENT_REGISTRY_API_VERSION         :: u32(1)
 PROJECT_SETTINGS_API_VERSION       :: u32(1)
+ENGINE_STATE_API_VERSION           :: u32(1)
+
+// Platform_Pump_Proc runs on the engine main thread once per frame,
+// BEFORE the DAG. Modules that own a windowing system (e.g. BF_GPU/SDL)
+// register one to pump OS events and translate window-level signals
+// (close button, resize, focus loss) into engine_state flags.
+//
+// IMPORTANT: must be lightweight and non-blocking. Long work belongs
+// in DAG systems, not here.
+Platform_Pump_Proc :: proc()
+
+// Engine_State is the cross-DLL shared engine state. The pointer is
+// handed out by lib_context_query("engine_state"), so every DLL sees
+// the same memory as the engine executable (avoids Odin's per-DLL
+// package global duplication).
+//
+// Any field mutated by a module is also read by the engine's main
+// loop. Keep the writes from worker threads to the atomic-intended
+// fields only (`quit_requested` is b32; access is best-effort).
+Engine_State :: struct {
+	// Set by a module's platform pump when the OS asks the window to
+	// close. The engine run loop checks this at the top of every frame
+	// and exits when it is true.
+	quit_requested: b32,
+
+	// Registered platform pumps. Pump procs run on the engine main
+	// thread, once per frame, before the DAG is dispatched.
+	pump_count:    int,
+	pump_names:    [dynamic]string,
+	pump_procs:    [dynamic]Platform_Pump_Proc,
+
+	// register_pump is a function pointer into the engine executable
+	// that adds a pump to pump_names/pump_procs. Modules fetch
+	// engine_state via lib_context_query and call THIS — they must
+	// NOT call the SDK helper `engine_register_platform_pump`,
+	// because that would write into the DLL's own private copy of
+	// GLOBAL_ENGINE_STATE (Odin duplicates package globals per DLL)
+	// and the engine would never see the registration.
+	register_pump: proc(name: string, pump: Platform_Pump_Proc) -> bool,
+}
 
 // Core_Lib_Context is the host-side user_data handed to every loaded component.
 // Components must call lib_context_query() to obtain typed interfaces.
@@ -272,6 +313,7 @@ Core_Lib_Context :: struct {
 	module_context:    ^Module_Context,   // legacy; nil for non-module components
 	component_context: ^Component_Context, // unified; populated for every component kind
 	project_settings:  ^Project_Settings,
+	engine_state:      ^Engine_State, // shared engine state (quit_requested, pumps)
 }
 
 @(private)
@@ -323,6 +365,13 @@ core_lib_query_interface :: proc(
 	case CORE_LIB_INTERFACE_EVENT_REGISTRY:
 		if version != EVENT_REGISTRY_API_VERSION do return nil
 		return cast(rawptr)&GLOBAL_EVENT_REGISTRY
+
+	case CORE_LIB_INTERFACE_ENGINE_STATE:
+		if version != ENGINE_STATE_API_VERSION do return nil
+		if user_data == nil do return nil
+		core_ctx := cast(^Core_Lib_Context)user_data
+		if core_ctx.engine_state == nil do return nil
+		return cast(rawptr)core_ctx.engine_state
 	}
 	return nil
 }

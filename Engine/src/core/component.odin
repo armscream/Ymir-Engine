@@ -408,6 +408,7 @@ component_load_one :: proc(
 	core_context.module_context   = nil
 	core_context.project_settings = &GLOBAL_PROJECT_SETTINGS
 	core_context.component_context = &comp.ctx
+	core_context.engine_state      = engine_state_get()
 	comp.core_context = core_context
 
 	lib_context := Lib_Context {

@@ -120,7 +120,7 @@ shader_output_path :: proc(source: string) -> string {
     for strings.has_prefix(rel, "../") {
         rel = strings.trim_prefix(rel, "../")
     }
-    return fmt.tprintf("shaders/%s.spv", rel)
+    return fmt.aprintf("shaders/%s.spv", rel)
 }
 
 // process_shader compiles one shader to SPIR-V under
@@ -139,10 +139,31 @@ process_shader :: proc(p: rbs.Profile, shader: Shader_Info) {
     }
 }
 
+// to_forward_slash replaces backslashes with forward slashes.
+to_forward_slash :: proc(s: string) -> string {
+    out, _ := strings.replace_all(s, "\\", "/")
+    return out
+}
+
+// absolute_include_root resolves a project-relative include root
+// (relative to CWD = <repo>/Project/rbs) to an absolute, forward-slash
+// path. glslangValidator on Windows does not honour relative `-I`
+// flags (it resolves them against the source file's directory, not
+// CWD), so every include root must be absolute before being passed
+// through. See shader_build.odin:absolute_path for the matching
+// helper used by the shader walker.
+absolute_include_root :: proc(rel: string) -> string {
+    abs, err := filepath.abs(rel, context.allocator)
+    if err != nil {
+        return strings.clone(rel)
+    }
+    return to_forward_slash(abs)
+}
+
 // process_spirv runs glslangValidator on the source. `-V` selects
 // SPIR-V codegen, `-S <stage>` selects the shader stage, `-I<dir>`
 // adds the engine shader roots as include search paths so
-// `#include "../../Includes/Core.glsl"` resolves identically to the
+// `#include "Includes/Core.glsl"` resolves identically to the
 // runtime linker.
 @(private="file")
 process_spirv :: proc(p: rbs.Profile, shader: Shader_Info, output_abs: string) {
@@ -160,8 +181,20 @@ process_spirv :: proc(p: rbs.Profile, shader: Shader_Info, output_abs: string) {
     // Resolve include roots. Both Engine/src/Modules/BF_GPU/Shaders
     // and Engine/src/Extensions/BF_GPU_Mesh/Shaders are exposed so
     // module and extension shaders share the same include layout.
-    include_arg_module := fmt.tprintf("-I%s", "../Engine/src/Modules/BF_GPU/Shaders")
-    include_arg_ext    := fmt.tprintf("-I%s", "../Engine/src/Extensions/BF_GPU_Mesh/Shaders")
+    //
+    // IMPORTANT: must use the persistent allocator (aprintf) here.
+    // tprintf uses the temp allocator, and the matching `delete` below
+    // would then free temp-allocated memory through the default
+    // allocator -> heap corruption (STATUS_HEAP_CORRUPTION on Windows).
+    //
+    // IMPORTANT: glslangValidator on Windows does NOT honour relative
+    // `-I` paths (it resolves them against the source file's directory,
+    // not CWD), so the include roots are converted to absolute form
+    // before being passed through. The shader `#include "Includes/..."`
+    // directives are written relative to the Shaders root (the `-I`
+    // target), matching how the module shaders are laid out.
+    include_arg_module := fmt.aprintf("-I%s", absolute_include_root("../Engine/src/Modules/BF_GPU/Shaders"))
+    include_arg_ext    := fmt.aprintf("-I%s", absolute_include_root("../Engine/src/Extensions/BF_GPU_Mesh/Shaders"))
     defer delete(include_arg_module)
     defer delete(include_arg_ext)
 
@@ -171,16 +204,23 @@ process_spirv :: proc(p: rbs.Profile, shader: Shader_Info, output_abs: string) {
         return
     }
 
-    argv := []string{
-        "glslangValidator",
-        "-V",
-        fmt.tprintf("-S%s", stage_flag),
-        include_arg_module,
-        include_arg_ext,
-        "-o", output_abs,
-        shader.path,
-    }
-    defer delete(argv)
+    // Build argv in a [dynamic]string (heap-backed) instead of a
+    // []string{...} literal. delete on a []string backing produced by
+    // a slice literal has been observed to corrupt the heap on Windows
+    // (STATUS_HEAP_CORRUPTION), likely because the compiler emits the
+    // backing as a read-only constant. [dynamic] gives us a normal
+    // heap allocation that delete() can safely free.
+    argv_buf: [dynamic]string
+    append(&argv_buf, "glslangValidator")
+    append(&argv_buf, "-V")
+    append(&argv_buf, "--target-env", "vulkan1.3")
+    append(&argv_buf, "-S", stage_flag)
+    append(&argv_buf, include_arg_module)
+    append(&argv_buf, include_arg_ext)
+    append(&argv_buf, "-o", output_abs)
+    append(&argv_buf, shader.path)
+    argv := argv_buf[:]
+    defer delete(argv_buf)
 
     script := strings.join(argv, " ", context.allocator)
     defer delete(script)

@@ -136,9 +136,7 @@ join_project_path :: proc(a: string, b: string) -> string {
 //
 command_path :: proc(path: string) -> string {
 	result := strings.clone(path)
-
 	result, _ = strings.replace(result, "\\", "/", -1)
-
 	return result
 }
 
@@ -877,7 +875,7 @@ pre_build_debug :: proc(ctx: rbs.Context, profile: rbs.Profile) {
 
 	build_plugins(&project_config, profile)
 
-	compile_shaders(profile)
+ 	compile_shaders(profile)
 
 	copy_project_config(profile)
 
@@ -906,7 +904,7 @@ pre_build_editor :: proc(ctx: rbs.Context, profile: rbs.Profile) {
 
 	build_plugins(&project_config, profile)
 
-	compile_shaders(profile)
+ 	compile_shaders(profile)
 
 	copy_project_config(profile)
 
@@ -935,7 +933,7 @@ pre_build_release :: proc(ctx: rbs.Context, profile: rbs.Profile) {
 
 	build_plugins(&project_config, profile)
 
-	compile_shaders(profile)
+ 	compile_shaders(profile)
 
 	copy_project_config(profile)
 
@@ -1135,7 +1133,7 @@ main :: proc() {
 		rbs.exec_odin_cmd(ctx, rbs.Odin_Command.Build, profile)
 	})
 
-	// ========================================================================
+// ========================================================================
 	// MANIFEST COMMAND
 	// ========================================================================
 	//
@@ -1151,6 +1149,29 @@ main :: proc() {
 	//
 	rbs.add_command(&ctx, "manifest", proc(ctx: rbs.Context, profile: rbs.Profile) {
 		rbs.manifest_codegen_run(ctx, profile)
+	})
+
+	// ========================================================================
+	// SHADERS COMMAND
+	// ========================================================================
+	//
+	// `rune shaders` runs only the shader compile pipeline (GLSL -> SPIR-V
+	// under <profile.output>/shaders/). The other module/extension/plugin
+	// builds are skipped - useful when iterating on shaders while the rest
+	// of the build chain is broken upstream.
+	//
+	// Usage:
+	//     rune shaders       # uses default profile (DEBUG)
+	//     rune shaders DEBUG
+	//
+	rbs.add_command(&ctx, "shaders", proc(ctx: rbs.Context, profile: rbs.Profile) {
+		_ = ctx
+		// Make sure the output directory exists so glslangValidator can
+		// write into it.
+		if mk_err := os.make_directory_all(profile.output); mk_err != nil {
+			log.warnf("Could not create %s: %s", profile.output, mk_err)
+		}
+		run_shaders_only(profile)
 	})
 
 	// ========================================================================

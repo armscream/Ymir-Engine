@@ -54,7 +54,8 @@ version = { major = 0, minor = 0, patch = 1 }
 
 [[extensions]]
 name = "BF_GPU_Mesh"
-enabled = false
+enabled = true
+required = false
 version = { major = 0, minor = 0, patch = 1 }
 
 [[plugins]]

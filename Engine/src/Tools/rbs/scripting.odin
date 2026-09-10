@@ -3,14 +3,6 @@ package rbs
 import "core:fmt"
 import "core:strings"
 import "core:os"
-import "core:thread"
-
-@(private="file")
-T_Data :: struct {
-    out_r: ^os.File,
-    err_r: ^os.File,
-    process_done: ^bool
-}
 
 run_script :: proc(script: string) -> Error {
     return run_argv(strings.split(script, " "), script)
@@ -19,6 +11,13 @@ run_script :: proc(script: string) -> Error {
 // run_argv executes `argv` directly without shell parsing. Preferred over
 // `run_script` when arguments may contain spaces (e.g. `-out:` paths whose
 // final filename embeds the project name).
+//
+// Implementation note: we do NOT capture stdout/stderr via pipes. The child
+// inherits the parent's stdio so all output (including glslc errors and
+// odin diagnostics) goes straight to the console. A previous version piped
+// output into a background reader thread, which intermittently lost the
+// tail of the child's output because the reader's `pipe_has_data` poll
+// could not reliably detect EOF before the read ends were closed.
 run_argv :: proc(argv: []string, display: string) -> Error {
     cmds: []string
     if ODIN_OS == .Linux {
@@ -32,39 +31,20 @@ run_argv :: proc(argv: []string, display: string) -> Error {
         cmds = argv
     }
 
-    stdout_r, stdout_w, _ := os.pipe()
-    stderr_r, stderr_w, _ := os.pipe()
-
-    defer os.close(stderr_r)
-    defer os.close(stdout_r)
-
-    t: ^thread.Thread
-    done := false
-    data := T_Data {
-        out_r = stdout_r,
-        err_r = stderr_r,
-        process_done = &done
+    p, start_err := os.process_start({
+        command = cmds,
+    })
+    if start_err != nil {
+        fmt.eprintfln("Script %s failed to start: %v", display, start_err)
+        return .Script_Error
     }
 
-    p, _ := os.process_start({
-        command = cmds,
-        stdout = stdout_w,
-        stderr = stderr_w,
-    })
-
-    t = thread.create_and_start_with_poly_data(&data, get_logs_from_process)
-    defer thread.destroy(t)
-
     state, process_err := os.process_wait(p)
-    done = true
 
     if process_err != nil {
         fmt.eprintfln("Script %s failed with %s", display, process_err)
         return .Script_Error
     }
-
-    os.close(stdout_w)
-    os.close(stderr_w)
 
     if state.exit_code != 0 {
         fmt.eprintfln("Script exited with code: %d", state.exit_code)
@@ -72,50 +52,4 @@ run_argv :: proc(argv: []string, display: string) -> Error {
     }
 
     return nil
-}
-
-@(private="file")
-get_logs_from_process :: proc(data: ^T_Data) {
-    buf: [1024]u8 = ---
-    err: os.Error
-    stdout_done, stderr_done, has_data: bool
-    
-    for (!stdout_done || !stderr_done) && !data.process_done^ {
-        n := 0
-
-        if !stdout_done {
-            has_data, err = os.pipe_has_data(data.out_r)
-            if has_data {
-                n, err = os.read(data.out_r, buf[:])
-            }
-
-            switch err {
-            case nil:
-                if n > 0 {
-                    fmt.print(string(buf[0:n]))
-                }
-            case .EOF, .Broken_Pipe:
-                stdout_done = true
-                err = nil
-            }
-        }
-
-        if err == nil && !stderr_done {
-            n = 0
-            has_data, err = os.pipe_has_data(data.err_r)
-            if has_data {
-                n, err = os.read(data.err_r, buf[:])
-            }
-
-            switch err {
-            case nil:
-                if n > 0 {
-                    fmt.eprint(string(buf[0:n]))
-                }
-            case .EOF, .Broken_Pipe:
-                stderr_done = true
-                err = nil
-            }
-        }
-    }
 }

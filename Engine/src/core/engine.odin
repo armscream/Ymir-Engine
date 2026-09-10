@@ -116,6 +116,11 @@ init :: proc(app: ^Engine_App_Interface, run_editor: bool) -> bool {
 	context.logger = log.create_console_logger()
 	inject_default_project_settings()
 
+	// Allocate the shared Engine_State before any DLL loads so the
+	// pointer can be wired into every Core_Lib_Context via
+	// engine_state_get().
+	engine_state_init(context.allocator)
+
 	RUN_EDITOR = run_editor
 	GLOBAL_APP_INTERFACE = app
 
@@ -143,6 +148,8 @@ init :: proc(app: ^Engine_App_Interface, run_editor: bool) -> bool {
 					resource_registry_destroy(cast(^Resource_Registry)op.target)
 				case .RK_Event:
 					event_registry_destroy(cast(^Event_Registry)op.target)
+				case .RK_EngineState:
+					engine_state_destroy()
 				}
 			}
 		}
@@ -217,6 +224,7 @@ registry_kind :: enum {
 	RK_Service,
 	RK_Resource,
 	RK_Event,
+	RK_EngineState,
 }
 
 registry_init_with_rollback :: proc(
@@ -245,6 +253,10 @@ registry_init_with_rollback :: proc(
 	case .RK_Event:
 		er := cast(^Event_Registry)target
 		ok = event_registry_init(er, allocator)
+	case .RK_EngineState:
+		// Engine_State is a host-only singleton; init happens in
+		// engine_state_init() before any DLL load. Nothing to do here.
+		ok = true
 	}
 	if !ok do return false
 	append(rollback, Rollback_Op{kind = kind, target = target})
@@ -253,6 +265,85 @@ registry_init_with_rollback :: proc(
 
 engine_quit :: proc() {
 	ENGINE_RUNNING = false
+}
+
+// ============================================================================
+//* ENGINE STATE — shared across the host + every loaded DLL
+//
+// A single Engine_State struct lives in the engine executable. Every DLL
+// gets the same pointer via lib_context_query("engine_state"), so writes
+// from a DLL pump and reads from the engine's main loop see the same
+// memory. This is the recommended path for any cross-DLL flag; do NOT
+// stash engine-wide state in package-level globals because Odin
+// duplicates those per DLL.
+// ============================================================================
+
+@(private)
+GLOBAL_ENGINE_STATE: ^Engine_State
+
+@(private)
+ENGINE_STATE_ALLOCATOR: mem.Allocator
+
+// engine_state_get returns the engine's shared Engine_State pointer.
+// Allocated once during engine.init and freed by engine.destroy.
+engine_state_get :: proc() -> ^Engine_State {
+	return GLOBAL_ENGINE_STATE
+}
+
+// engine_state_init allocates the shared Engine_State. Called once from
+// engine.init; subsequent calls return false and leave the existing
+// state untouched.
+@(private)
+engine_state_init :: proc(allocator: mem.Allocator) -> bool {
+	if GLOBAL_ENGINE_STATE != nil do return false
+	GLOBAL_ENGINE_STATE = new(Engine_State, allocator)
+	GLOBAL_ENGINE_STATE.quit_requested = false
+	GLOBAL_ENGINE_STATE.pump_names     = make([dynamic]string, allocator)
+	GLOBAL_ENGINE_STATE.pump_procs     = make([dynamic]Platform_Pump_Proc, allocator)
+	GLOBAL_ENGINE_STATE.pump_count     = 0
+	// register_pump routes DLL-side registration calls back into
+	// engine.exe's GLOBAL_ENGINE_STATE.pump_procs list. Without this
+	// indirection a DLL calling `engine_register_platform_pump` would
+	// silently write into its own (nil, here) package global and
+	// never register with the engine.
+	GLOBAL_ENGINE_STATE.register_pump  = engine_register_platform_pump
+	ENGINE_STATE_ALLOCATOR              = allocator
+	return true
+}
+
+@(private)
+engine_state_destroy :: proc() {
+	if GLOBAL_ENGINE_STATE == nil do return
+	delete(GLOBAL_ENGINE_STATE.pump_names)
+	delete(GLOBAL_ENGINE_STATE.pump_procs)
+	free(GLOBAL_ENGINE_STATE, ENGINE_STATE_ALLOCATOR)
+	GLOBAL_ENGINE_STATE = nil
+}
+
+// engine_register_platform_pump adds a pump proc to the engine's pump
+// list. Returns false if name is empty, proc is nil, or the name was
+// already registered.
+engine_register_platform_pump :: proc(name: string, pump: Platform_Pump_Proc) -> bool {
+	if GLOBAL_ENGINE_STATE == nil do return false
+	if len(name) == 0 || pump == nil do return false
+	for n in GLOBAL_ENGINE_STATE.pump_names {
+		if n == name do return false
+	}
+	append(&GLOBAL_ENGINE_STATE.pump_names, name)
+	append(&GLOBAL_ENGINE_STATE.pump_procs, pump)
+	GLOBAL_ENGINE_STATE.pump_count = len(GLOBAL_ENGINE_STATE.pump_procs)
+	return true
+}
+
+// engine_run_platform_pumps invokes every registered pump. Called by
+// the engine run loop on the main thread, once per frame, BEFORE the
+// DAG dispatches.
+@(private)
+engine_run_platform_pumps :: proc() {
+	if GLOBAL_ENGINE_STATE == nil do return
+	for p in GLOBAL_ENGINE_STATE.pump_procs {
+		if p != nil do p()
+	}
 }
 
 //* ENGINE RUN — frame loop driver
@@ -279,10 +370,22 @@ run :: proc() {
 	first_frame := true
 
 	ENGINE_RUN: for ENGINE_RUNNING {
-		// Poll module-owned quit providers (window close, engine
-		// shutdown request, ...). If any returns true, drop out before
-		// doing any frame work. Modules register these via the SDK;
-		// Core never imports the module packages themselves.
+		// Run module-registered platform pumps FIRST. These typically
+		// translate OS-level signals (window-close button, resize,
+		// focus loss) into engine_state flags that engine_poll_quit
+		// then checks below. Pumps must be lightweight — long work
+		// belongs in DAG systems.
+		engine_run_platform_pumps()
+
+		// Two quit sources, both checked at the top of every frame:
+		//   1. engine_state.quit_requested — set by any platform pump
+		//      that owns the OS window (BF_GPU/SDL).
+		//   2. GLOBAL_QUIT_PROVIDERS — proc() -> bool callbacks
+		//      installed via the SDK by any module (BF_Input, the
+		//      game app, ...).
+		if GLOBAL_ENGINE_STATE != nil && GLOBAL_ENGINE_STATE.quit_requested {
+			break ENGINE_RUN
+		}
 		if engine_poll_quit() {
 			break ENGINE_RUN
 		}
@@ -382,6 +485,8 @@ destroy :: proc() -> bool {
 	engine_self_handle = {}
 	delete(GLOBAL_QUIT_PROVIDERS)
 	GLOBAL_APP_INTERFACE = nil
+
+	engine_state_destroy()
 
 	log.destroy_console_logger(context.logger)
 	return true

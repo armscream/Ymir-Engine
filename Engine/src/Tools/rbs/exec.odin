@@ -52,8 +52,8 @@ build_odin_argv :: proc(s_cmd: string, profile: Profile, out: string, ext: strin
     append(&argv, "odin")
     append(&argv, s_cmd)
     append(&argv, profile.entry)
-    append(&argv, fmt.tprintf("-out:%s%s%s", out, profile.name, ext))
-    append(&argv, fmt.tprintf("-target:%s", get_platform(profile.arch, profile.os)))
+    append(&argv, fmt.aprintf("-out:%s%s%s", out, profile.name, ext))
+    append(&argv, fmt.aprintf("-target:%s", get_platform(profile.arch, profile.os)))
 
     flags := strings.split(profile.flags, " ")
     defer delete(flags)
