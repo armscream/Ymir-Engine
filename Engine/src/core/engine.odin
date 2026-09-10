@@ -629,6 +629,15 @@ scheduler_start_workers :: proc() -> bool {
 
 scheduler_shutdown :: proc() {
 	if GLOBAL_SCHEDULER_SERVICE == nil do return
+	// IMPORTANT: must actually tear the scheduler down. Worker threads
+	// keep running and call into module code (renderer functions, etc.)
+	// every frame; if we just null the pointer here, those threads are
+	// still alive when module_unload frees the BF_GPU/BF_Input DLLs.
+	// FreeLibrary + a still-running worker = crash or hang on the next
+	// syscall into freed code.
+	if GLOBAL_SCHEDULER_SERVICE.destroy != nil {
+		GLOBAL_SCHEDULER_SERVICE.destroy(GLOBAL_SCHEDULER_SERVICE)
+	}
 	GLOBAL_SCHEDULER_SERVICE = nil
 }
 

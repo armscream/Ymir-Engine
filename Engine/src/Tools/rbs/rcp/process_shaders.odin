@@ -193,8 +193,8 @@ process_spirv :: proc(p: rbs.Profile, shader: Shader_Info, output_abs: string) {
     // before being passed through. The shader `#include "Includes/..."`
     // directives are written relative to the Shaders root (the `-I`
     // target), matching how the module shaders are laid out.
-    include_arg_module := fmt.aprintf("-I%s", absolute_include_root("../Engine/src/Modules/BF_GPU/Shaders"))
-    include_arg_ext    := fmt.aprintf("-I%s", absolute_include_root("../Engine/src/Extensions/BF_GPU_Mesh/Shaders"))
+    include_arg_module := fmt.aprintf("-I%s", absolute_include_root("../../Engine/src/Modules/BF_GPU/Shaders"))
+    include_arg_ext    := fmt.aprintf("-I%s", absolute_include_root("../../Engine/src/Extensions/BF_GPU_Mesh/Shaders"))
     defer delete(include_arg_module)
     defer delete(include_arg_ext)
 
