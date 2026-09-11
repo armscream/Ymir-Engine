@@ -19,6 +19,57 @@ this builds the rune.exe which you will need to build the engine and all modules
 - ./rune manifest --check exits 1 on a stale manifest
 - This will build all dependencies listed in project.toml for the configuration you are running, as well as the executable into the bin directory. It also copies the assets, config, and scripts folders into the bin directory. It is recommended to only have .odin files directly under /Project.
 
+## Asset conversion (offline tool)
+
+The asset converter (Engine/src/Tools/asset_converter/) is a separate SDL3 + Dear ImGui tool that runs at import time, NOT at runtime. It converts glTF / GLB source assets into the engine's binary `.bmesh` format, applying the quantization / mesh-optimization / LOD settings from `Project/config/project.toml -> [renderer_settings]`.
+
+### Vendored dependencies
+
+Two git submodules are required and live under `Engine/src/dependencies/`:
+
+| Path | Source | Purpose |
+| --- | --- | --- |
+| `imgui/` | https://github.com/Capati/odin-imgui | Dear ImGui bindings + SDL3 backend |
+| `meshoptimizer/` | https://github.com/zeux/meshoptimizer | Vertex cache / fetch / LOD / stripify |
+
+`vendor:cgltf` is pulled from Odin's vendor collection (already used by `BF_MapDB`) for glTF 2.0 parsing. SDL3 is also pulled from Odin's vendor collection via `vendor:sdl3`.
+
+### Build the ImGui static library (one-time)
+
+`imgui.odin` foreign-imports a prebuilt `imgui_windows_x64.lib` from `Engine/src/dependencies/imgui/`. Build it once with the upstream instructions (https://github.com/Capati/odin-imgui#windows):
+
+```
+premake5 --backends=sdl3 vs2022
+cd build\make\windows
+# open ImGui.sln in VS, set platform to x64, Build Solution
+# copy imgui_windows_x64.lib from the project root into Engine/src/dependencies/imgui/
+```
+
+### Build the asset converter
+
+The asset converter is wired into `rune.exe` as its own build profile:
+
+```
+./rune build ASSET_CONVERTER    # produces Project/bin/Tools/asset_converter.exe
+./rune run ASSET_CONVERTER      # build + run the GUI
+```
+
+`rune` will compile the vendored meshoptimizer C++ source into `meshoptimizer.lib` via `cl.exe` (MSVC Build Tools required on Windows), then build the Odin binary.
+
+### Quantization settings
+
+The tool reads `[renderer_settings]` from `Project/config/project.toml` for defaults. The runtime renderer reads the same settings, so the tool and the runtime agree on every byte of the produced `.bmesh`. The settings honored by the tool include:
+
+- `vertex_quantization.position` / `.uv` / `.tangent` (U8 / U16 / F32)
+- `index_buffer_format` (U16 / U32)
+- `oct_encoded_normals` (when U8/U16 positions, normals are octahedral-encoded)
+- `mesh_optimization.vertex_cache_reordering` / `.triangle_stripification`
+- `lod_count` / `lod_simplification`
+- `animation_quantization.rotation` / `.translation` / `.scale`
+- `bone_weight_format`
+
+Any of these can be overridden in the tool's modal window without touching `project.toml`.
+
 ## Plans
 
 Currently this only supports windows, I will later add support for linux and mac with .so and .dylib files and platform-specific compilation targets.

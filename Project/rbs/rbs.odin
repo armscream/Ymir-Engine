@@ -70,14 +70,16 @@ PROJECT_PLUGINS_PATH   :: "../plugins"
 DEBUG_OUTPUT_PATH   :: "../bin/Debug"
 EDITOR_OUTPUT_PATH  :: "../bin/Editor"
 RELEASE_OUTPUT_PATH :: "../bin/Release"
+ASSET_CONVERTER_OUTPUT_PATH :: "../bin/Tools"
 
 // Stable, filename-safe identifiers used for profile-aware switches below.
 // The executable output name (`Profile.name`) is built from `project_name`
 // and may contain spaces; use these constants when matching a profile by
 // identity instead of by display name.
-DEBUG_NAME   :: "Debug"
-EDITOR_NAME  :: "Editor"
-RELEASE_NAME :: "Release"
+DEBUG_NAME           :: "Debug"
+EDITOR_NAME          :: "Editor"
+RELEASE_NAME         :: "Release"
+ASSET_CONVERTER_NAME :: "Tools"
 
 ConfigState :: enum {
 	None, // none found, continue and lets the engine create one
@@ -1319,9 +1321,26 @@ pre_build :: proc(ctx: rbs.Context, profile: rbs.Profile) {
 	case RELEASE_OUTPUT_PATH:
 		pre_build_release(ctx, profile)
 
+	case ASSET_CONVERTER_OUTPUT_PATH:
+		pre_build_asset_converter(ctx, profile)
+
 	case:
 		fatal(fmt.aprintf("ERROR: Unknown build profile: %s", profile.output))
 	}
+}
+
+
+// ============================================================================
+// ASSET CONVERTER PRE-BUILD
+// ============================================================================
+//
+// Builds Engine/src/Tools/asset_converter (SDL3 + Dear ImGui modal
+// for offline asset conversion). Does NOT touch the engine runtime.
+// See Project/rbs/asset_converter_build.odin for the tool pipeline.
+//
+pre_build_asset_converter :: proc(ctx: rbs.Context, profile: rbs.Profile) {
+	_ = ctx
+	build_asset_converter(profile)
 }
 
 
@@ -1426,6 +1445,29 @@ main :: proc() {
 			mode = .Executable,
 			name = project_config.project_name,
 			output = RELEASE_OUTPUT_PATH,
+			arch = ODIN_ARCH,
+			os = ODIN_OS,
+		},
+	)
+
+	// ========================================================================
+	// ASSET_CONVERTER PROFILE
+	// ========================================================================
+	//
+	// Build the asset conversion tool (Engine/src/Tools/asset_converter).
+	// Not part of the engine runtime -- used at import time. Building it
+	// requires MSVC (cl.exe) on Windows because meshoptimizer is a C++
+	// library. See Project/rbs/asset_converter_build.odin.
+	//
+	rbs.add_profile(
+		&ctx,
+		"ASSET_CONVERTER",
+		{
+			entry = ASSET_CONVERTER_PACKAGE,
+			flags = "-vet -debug",
+			mode = .Executable,
+			name = "asset_converter",
+			output = ASSET_CONVERTER_OUTPUT_PATH,
 			arch = ODIN_ARCH,
 			os = ODIN_OS,
 		},

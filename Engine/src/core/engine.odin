@@ -497,15 +497,13 @@ destroy :: proc() -> bool {
 
 GLOBAL_SCHEDULER_SERVICE: ^Scheduler_Service
 
-SCHEDULER_SERVICE_NAME_INTERNAL :: "BF_DAG.Scheduler"
-
 @(private)
 engine_world_handle: World_Handle
 @(private)
 engine_self_handle: Engine_Handle
 
 scheduler_build :: proc() -> bool {
-	handle, ok := service_find(&GLOBAL_SERVICE_REGISTRY, SCHEDULER_SERVICE_NAME_INTERNAL)
+	handle, ok := service_find(&GLOBAL_SERVICE_REGISTRY, BF_DAG_SCHEDULER_SERVICE_NAME)
 	if !ok {
 		log.warn("[Scheduler] BF_DAG.Scheduler service not registered — running without a scheduler.")
 		return true

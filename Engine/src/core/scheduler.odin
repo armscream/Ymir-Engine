@@ -15,17 +15,25 @@ import "core:mem"
 // SYSTEM STAGE + ACCESS MASKS
 // ============================================================================
 
+// System_Stage orders systems on the frame timeline. The render sub-stages
+// (Render_Extract -> Render_Upload -> Render_Submit) are the explicit DAG
+// stages the renderer pipeline uses; they sit between PreRender and the
+// legacy .Render / .PostRender slots so existing game-side systems keep
+// their meaning. See BF_GPU/Renderer.odin::renderer_register_systems.
 System_Stage :: enum u32 {
-	PreStartup  = 0,
-	Startup     = 1,
-	PostStartup = 2,
-	PreUpdate   = 3,
-	Update      = 4,
-	PostUpdate  = 5,
-	PreRender   = 6,
-	Render      = 7,
-	PostRender  = 8,
-	EndOfFrame  = 9,
+	PreStartup     = 0,
+	Startup        = 1,
+	PostStartup    = 2,
+	PreUpdate      = 3,
+	Update         = 4,
+	PostUpdate     = 5,
+	PreRender      = 6,
+	Render_Extract = 7, // BF_GPU.SceneExtract: ECS -> Render_Scene
+	Render_Upload  = 8, // BF_GPU.Render_Upload:  Render_Scene -> GPU_Scene + ctx
+	Render_Submit  = 9, // BF_GPU.Render_Submit:  backend.record_frame + advance
+	Render         = 10,
+	PostRender     = 11,
+	EndOfFrame     = 12,
 }
 
 System_ID :: distinct u32
@@ -63,6 +71,43 @@ World_Handle :: struct {
 Engine_Handle :: struct {
 	ptr: rawptr,
 }
+
+//* EXTERNAL NODE HANDLE
+//
+// External_Node_Handle is the ABI-stable handle BF_GPU / BF_Net / BF_Audio
+// pass through the Scheduler_Service vtable to attach waits/signals to
+// external synchronization nodes (GPU fences, async reads, OS events,
+// audio callbacks, asset stream completions, editor background jobs).
+// The layout must match BF_DAG's internal hm.Handle32 (idx: u16,
+// gen: u16) so a value handed out by external_create can be resolved
+// by external_wait/signal/etc. inside BF_DAG without translation.
+External_Node_Handle :: struct {
+	idx: u16,
+	gen: u16,
+}
+
+EXTERNAL_NODE_HANDLE_INVALID :: External_Node_Handle{}
+
+//* SCHEDULER SERVICE NAME
+//
+// The single, engine-wide name of the Scheduler_Service vtable. Modules
+// look this up via service_find and cast the instance to
+// ^Scheduler_Service. Defined here (not in BF_DAG) so modules that
+// consume the service do not need a package dependency on BF_DAG.
+BF_DAG_SCHEDULER_SERVICE_NAME :: "BF_DAG.Scheduler"
+
+//* PRE-FRAME HOOK
+//
+// A pre-frame hook runs at the start of each scheduler frame, BEFORE
+// frame_active is set, while external-node state is still mutable.
+// Hooks let a renderer, asset streamer, or network layer attach
+// per-frame external waits without taking a package dependency on
+// BF_DAG.
+//
+// user_data is opaque to the scheduler; the hook's owner passes it
+// through so the renderer can stash its own context (e.g. its
+// pre-resolved system names, its GPU completion external handle).
+Scheduler_Pre_Frame_Hook :: proc(runtime: rawptr, user_data: rawptr)
 
 //* FRAME CONTEXT
 // Scheduler_Frame is the per-frame context that flows into every
@@ -130,6 +175,56 @@ Scheduler_Service :: struct {
 	// via Service_Registration.destroy.
 	destroy:       proc(service: ^Scheduler_Service),
 	worker_count:  proc(service: ^Scheduler_Service) -> int,
+
+	// ---------------------------------------------------------------
+	// External-node API. Modules use these to wire meaningful external
+	// synchronization boundaries (GPU fences, async reads, OS events,
+	// asset stream completions) into the DAG. See BF_DAG/external.odin
+	// for the full semantics of each operation.
+	// ---------------------------------------------------------------
+
+	// external_create allocates a new external node and returns its
+	// handle. The returned handle is `EXTERNAL_NODE_HANDLE_INVALID` on
+	// failure; otherwise it must be destroyed with external_destroy.
+	external_create: proc(service: ^Scheduler_Service) -> External_Node_Handle,
+
+	// external_destroy frees an external node. Pending waiters are
+	// gracefully cancelled so they don't deadlock the next frame.
+	external_destroy: proc(service: ^Scheduler_Service, handle: External_Node_Handle) -> bool,
+
+	// external_signal marks the external node as signaled. If the node
+	// has any registered waiters they are released (their DAG node's
+	// remaining counter is decremented); subsequent waits on the same
+	// node short-circuit until external_reset is called.
+	external_signal: proc(service: ^Scheduler_Service, handle: External_Node_Handle) -> bool,
+
+	// external_reset clears the signaled flag so the node can be
+	// waited on again. Call this once per frame after a frame's
+	// downstream work has been satisfied (e.g. after the present
+	// step or at the start of the next frame, depending on the
+	// ownership model). Returns false if the handle is stale.
+	external_reset: proc(service: ^Scheduler_Service, handle: External_Node_Handle) -> bool,
+
+	// external_wait_for_system_name attaches an external wait on
+	// `handle` to the DAG node whose System_Entry.name matches
+	// `system_name`. Must be called from a pre-frame hook (or before
+	// the frame is otherwise active). Returns false if the system
+	// name is unknown, the handle is stale, or the node has already
+	// advanced past NODE_WAITING.
+	external_wait_for_system_name: proc(
+		service: ^Scheduler_Service,
+		handle: External_Node_Handle,
+		system_name: cstring,
+	) -> bool,
+
+	// register_pre_frame_hook schedules `hook` to run inside
+	// begin_frame, before the frame becomes active. Multiple hooks
+	// fire in registration order. Returns true on success.
+	register_pre_frame_hook: proc(
+		service: ^Scheduler_Service,
+		hook: Scheduler_Pre_Frame_Hook,
+		user_data: rawptr,
+	) -> bool,
 }
 
 //* HELPERS

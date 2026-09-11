@@ -1,0 +1,8 @@
+[submodule "Engine/src/dependencies/imgui"]
+	path = Engine/src/dependencies/imgui
+	url = https://github.com/Capati/odin-imgui.git
+	branch = main
+[submodule "Engine/src/dependencies/meshoptimizer"]
+	path = Engine/src/dependencies/meshoptimizer
+	url = https://github.com/zeux/meshoptimizer.git
+	branch = master
