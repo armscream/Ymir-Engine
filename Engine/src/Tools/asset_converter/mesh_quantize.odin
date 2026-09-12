@@ -26,11 +26,9 @@
 
 package asset_converter
 
-import "core:mem"
 import "core:math"
 
 import Core "../../Core"
-import gltf "../../dependencies/gltf"
 
 // Returns the byte size of a single vertex channel under the given
 // quantization level.
@@ -115,7 +113,7 @@ decode_octahedral :: proc(e: [2]f32) -> [3]f32 {
 	p := e[0]
 	q := e[1]
 	n: [3]f32 = {p, q, 1.0 - math.abs(p) - math.abs(q)}
-	l := math.length(n[0:3])
+	l := math.sqrt(n[0]*n[0] + n[1]*n[1] + n[2]*n[2])
 	if l > 1e-8 {
 		n[0] /= l
 		n[1] /= l
@@ -164,29 +162,31 @@ vertex_writer_destroy :: proc(w: ^Vertex_Writer) {
 	delete(w.data)
 }
 
-// write_vertex encodes one vertex into the destination buffer and
-// advances `offset`. The caller is responsible for ensuring all
-// fields are valid (e.g. normal / tangent are unit vectors).
+// write_vertex encodes one vertex and appends it to the destination.
+// The caller is responsible for ensuring all fields are valid (e.g.
+// normal / tangent are unit vectors).
 write_vertex :: proc(w: ^Vertex_Writer, pos, nrm, tan: [3]f32, uv: [2]f32) {
-	reserve(&w.data, w.offset + w.stride)
-	buf := w.data[w.offset:][:w.stride]
+	start := len(w.data)
+	resize(&w.data, start + w.stride)
+	buf := w.data[start:][:w.stride]
 	bo := 0 // byte offset within `buf`
 
 	// --- position ---
 	switch w.vq.position {
 	case .U8:
 		for i in 0..<3 {
-			(^u8)(raw_data(buf[bo:]))[0] = quantize_f32_to_u8(pos[i], w.pos_min[i], w.pos_max[i])
+			buf[bo] = quantize_f32_to_u8(pos[i], w.pos_min[i], w.pos_max[i])
 			bo += 1
 		}
 	case .U16:
 		for i in 0..<3 {
-			(^u16)(raw_data(buf[bo:]))[0] = quantize_f32_to_u16(pos[i], w.pos_min[i], w.pos_max[i])
+			v := quantize_f32_to_u16(pos[i], w.pos_min[i], w.pos_max[i])
+			le_u16(buf, bo, v)
 			bo += 2
 		}
 	case .F32:
 		for i in 0..<3 {
-			(^f32)(raw_data(buf[bo:]))[0] = pos[i]
+			le_f32(buf, bo, pos[i])
 			bo += 4
 		}
 	}
@@ -196,21 +196,21 @@ write_vertex :: proc(w: ^Vertex_Writer, pos, nrm, tan: [3]f32, uv: [2]f32) {
 	case .F32:
 		// F32 positions => F32 normals (uncompressed)
 		for i in 0..<3 {
-			(^f32)(raw_data(buf[bo:]))[0] = nrm[i]
+			le_f32(buf, bo, nrm[i])
 			bo += 4
 		}
 	case .U8:
 		if w.oct_normals {
 			oct := encode_octahedral(nrm)
-			(^u8)(raw_data(buf[bo:]))[0] = quantize_f32_to_u8(oct[0], -1, 1)
-			(^u8)(raw_data(buf[bo+1:]))[0] = quantize_f32_to_u8(oct[1], -1, 1)
+			buf[bo]   = quantize_f32_to_u8(oct[0], -1, 1)
+			buf[bo+1] = quantize_f32_to_u8(oct[1], -1, 1)
 			bo += 2
 		}
 	case .U16:
 		if w.oct_normals {
 			oct := encode_octahedral(nrm)
-			(^u16)(raw_data(buf[bo:]))[0] = quantize_f32_to_u16(oct[0], -1, 1)
-			(^u16)(raw_data(buf[bo+2:]))[0] = quantize_f32_to_u16(oct[1], -1, 1)
+			le_u16(buf, bo,   quantize_f32_to_u16(oct[0], -1, 1))
+			le_u16(buf, bo+2, quantize_f32_to_u16(oct[1], -1, 1))
 			bo += 4
 		}
 	}
@@ -219,17 +219,17 @@ write_vertex :: proc(w: ^Vertex_Writer, pos, nrm, tan: [3]f32, uv: [2]f32) {
 	switch w.vq.uv {
 	case .U8:
 		for i in 0..<2 {
-			(^u8)(raw_data(buf[bo:]))[0] = quantize_f32_to_u8(uv[i], w.uv_min[i], w.uv_max[i])
+			buf[bo] = quantize_f32_to_u8(uv[i], w.uv_min[i], w.uv_max[i])
 			bo += 1
 		}
 	case .U16:
 		for i in 0..<2 {
-			(^u16)(raw_data(buf[bo:]))[0] = quantize_f32_to_u16(uv[i], w.uv_min[i], w.uv_max[i])
+			le_u16(buf, bo, quantize_f32_to_u16(uv[i], w.uv_min[i], w.uv_max[i]))
 			bo += 2
 		}
 	case .F32:
 		for i in 0..<2 {
-			(^f32)(raw_data(buf[bo:]))[0] = uv[i]
+			le_f32(buf, bo, uv[i])
 			bo += 4
 		}
 	}
@@ -239,33 +239,45 @@ write_vertex :: proc(w: ^Vertex_Writer, pos, nrm, tan: [3]f32, uv: [2]f32) {
 	case .F32:
 		// tangent stored as float4 (xyz + handedness in w)
 		for i in 0..<3 {
-			(^f32)(raw_data(buf[bo:]))[0] = tan[i]
+			le_f32(buf, bo, tan[i])
 			bo += 4
 		}
-		(^f32)(raw_data(buf[bo:]))[0] = 1.0 // handedness; compute proper sign at source time
+		le_f32(buf, bo, 1.0) // handedness; compute proper sign at source time
 		bo += 4
 	case .U8:
 		if w.oct_normals {
 			oct := encode_octahedral(tan)
-			(^u8)(raw_data(buf[bo:]))[0] = quantize_f32_to_u8(oct[0], -1, 1)
-			// Pack handedness bit into the LSB of the second component.
+			// Pack handedness bit into the MSB of the second component.
 			h: u8 = 1 // placeholder; proper sign is computed at source time
 			v := quantize_f32_to_u8(oct[1], -1, 1)
-			(^u8)(raw_data(buf[bo+1:]))[0] = (v & 0x7F) | (h << 7)
+			buf[bo]   = quantize_f32_to_u8(oct[0], -1, 1)
+			buf[bo+1] = (v & 0x7F) | (h << 7)
 			bo += 2
 		}
 	case .U16:
 		if w.oct_normals {
 			oct := encode_octahedral(tan)
-			(^u16)(raw_data(buf[bo:]))[0] = quantize_f32_to_u16(oct[0], -1, 1)
 			h: u16 = 1 << 15
 			v := quantize_f32_to_u16(oct[1], -1, 1)
-			(^u16)(raw_data(buf[bo+2:]))[0] = (v & 0x7FFF) | h
+			le_u16(buf, bo,   quantize_f32_to_u16(oct[0], -1, 1))
+			le_u16(buf, bo+2, (v & 0x7FFF) | h)
 			bo += 4
 		}
 	}
+}
 
-	w.offset += w.stride
+// Little-endian writers into a []u8 buffer at the given offset.
+le_u16 :: proc(buf: []u8, offset: int, v: u16) {
+	buf[offset]   = u8(v & 0xFF)
+	buf[offset+1] = u8((v >> 8) & 0xFF)
+}
+
+le_f32 :: proc(buf: []u8, offset: int, v: f32) {
+	u := transmute(u32)v
+	buf[offset]   = u8(u & 0xFF)
+	buf[offset+1] = u8((u >> 8)  & 0xFF)
+	buf[offset+2] = u8((u >> 16) & 0xFF)
+	buf[offset+3] = u8((u >> 24) & 0xFF)
 }
 
 // ============================================================================
@@ -279,9 +291,9 @@ Mesh_Bounds :: struct {
 
 compute_mesh_bounds :: proc(positions: []f32, uvs: []f32) -> Mesh_Bounds {
 	b: Mesh_Bounds
-	if len(positions) > 0 {
-		b.pos_min = positions[0:3]
-		b.pos_max = positions[0:3]
+	if len(positions) >= 3 {
+		b.pos_min = {positions[0], positions[1], positions[2]}
+		b.pos_max = {positions[0], positions[1], positions[2]}
 		for i in 0..<len(positions)/3 {
 			for k in 0..<3 {
 				v := positions[i*3+k]
@@ -291,8 +303,8 @@ compute_mesh_bounds :: proc(positions: []f32, uvs: []f32) -> Mesh_Bounds {
 		}
 	}
 	if len(uvs) >= 2 {
-		b.uv_min = uvs[0:2]
-		b.uv_max = uvs[0:2]
+		b.uv_min = {uvs[0], uvs[1]}
+		b.uv_max = {uvs[0], uvs[1]}
 		for i in 0..<len(uvs)/2 {
 			for k in 0..<2 {
 				v := uvs[i*2+k]

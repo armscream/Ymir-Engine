@@ -53,10 +53,9 @@ quantize_rotation :: proc(q: [4]f32) -> Quantized_Rotation {
 	if idx == 0 || idx == 2 do d2 = -d2 // recover sign
 
 	// Map the three kept components from [-1/sqrt(2), 1/sqrt(2)] to [0, 65535].
-	scale := 1.0 / math.sqrt_f32(2.0)
-	inv := 65535.0
-	encode := proc(v: f32) -> u16 {
-		t := (v * scale + 1.0) * 0.5 * inv
+	encode :: proc "contextless" (v: f32) -> u16 {
+		scale := 1.0 / math.sqrt_f32(2.0)
+		t := (v * scale + 1.0) * 0.5 * 65535.0
 		return u16(math.clamp(t, 0.0, 65535.0))
 	}
 
@@ -95,8 +94,8 @@ Vec_Channel_Bounds :: struct {
 compute_vec_channel_bounds :: proc(values: []f32) -> Vec_Channel_Bounds {
 	b: Vec_Channel_Bounds
 	if len(values) < 3 do return b
-	b.min = values[0:3]
-	b.max = values[0:3]
+	b.min = {values[0], values[1], values[2]}
+	b.max = {values[0], values[1], values[2]}
 	for i in 0..<len(values)/3 {
 		for k in 0..<3 {
 			v := values[i*3+k]

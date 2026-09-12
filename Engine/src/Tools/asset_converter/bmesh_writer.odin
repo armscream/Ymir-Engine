@@ -24,10 +24,8 @@ package asset_converter
 
 import "core:fmt"
 import "core:log"
-import "core:mem"
 import "core:os"
 import "core:path/filepath"
-import "core:strings"
 
 import Core "../../Core"
 import gltf "../../dependencies/gltf"
@@ -108,7 +106,7 @@ string_table_add :: proc(st: ^String_Table, s: string) -> u32 {
 		}
 	}
 	off := u32(len(st.bytes))
-	append(&st.bytes, transmute([]u8)s)
+	append(&st.bytes, s)
 	append(&st.bytes, 0) // NUL terminator
 	append(&st.offsets, off)
 	return off
@@ -120,7 +118,7 @@ string_table_add :: proc(st: ^String_Table, s: string) -> u32 {
 
 @(private)
 Writer :: struct {
-	out:           os.Handle,
+	out:           ^os.File,
 	file_offset:   int,
 	section_table: [dynamic]BMESH_Section_Header,
 	section_ids:   [dynamic]u32,
@@ -160,66 +158,95 @@ convert_asset :: proc(settings: Conversion_Settings) -> Conversion_Result {
 	log.info(fmt.tprintf("[asset_converter] converting %q -> %q", settings.source_path, settings.output_path))
 	gltf.gltf_document_log_summary(&doc)
 
+	log.info("[asset_converter] resolved renderer settings")
+
 	if len(doc.meshes) == 0 {
 		result.message = "glTF has no meshes"
 		return result
 	}
 
-	// For v1 we convert mesh 0 (and emit one .bmesh per primitive).
-	// A more advanced version would batch all meshes into one .bmap.
-	mesh := &doc.meshes[0]
+	// For v1 we convert ALL meshes from the default scene; each
+	// primitive produces one .bmesh. The supplied `output_path`
+	// becomes the base, with mesh + primitive index suffixes:
+	//
+	//   <output>                 -- mesh 0 primitive 0
+	//   <output>_p1              -- mesh 0 primitive 1
+	//   <output>_m1              -- mesh 1 primitive 0
+	//   ...
+	//
+	// For most glTF files there's one primitive per mesh.
 
-	if len(mesh.primitives) == 0 {
-		result.message = "glTF mesh has no primitives"
-		return result
-	}
+	base := settings.output_path
+	ext := filepath.ext(base)
+	stem := base[:len(base)-len(ext)] if len(ext) > 0 else base
 
 	// -- ensure output directory exists --
-	out_dir := filepath.dir(settings.output_path, context.allocator)
+	out_dir := filepath.dir(settings.output_path)
 	defer delete(out_dir)
-	if !os.exists(out_dir) {
+	if len(out_dir) > 0 && !os.exists(out_dir) {
 		if mk_err := os.make_directory_all(out_dir); mk_err != nil {
 			result.message = fmt.tprintf("could not create output dir %q: %v", out_dir, mk_err)
 			return result
 		}
 	}
 
-	// For a multi-primitive mesh, write one .bmesh per primitive.
-	// The supplied output_path is treated as a base path; if there
-	// are multiple primitives, "<base>.bmesh" + "<base>_N.bmesh".
-	base := settings.output_path
-	ext := filepath.ext(base)
-	stem := base[:len(base)-len(ext)] if len(ext) > 0 else base
-
 	best_stats: Mesh_Stats
 	converted_any := false
-	for prim_i in 0..<len(mesh.primitives) {
-		prim := &mesh.primitives[prim_i]
-		out_path := base
-		if len(mesh.primitives) > 1 {
-			out_path = fmt.tprintf("%s_%d%s", stem, prim_i, ext)
+	any_fail := false
+	failure_msg := ""
+
+	for mesh_i in 0..<len(doc.meshes) {
+		mesh := &doc.meshes[mesh_i]
+		if len(mesh.primitives) == 0 {
+			log.warnf("[asset_converter] mesh %d has no primitives; skipping", mesh_i)
+			continue
 		}
 
-		per_res := convert_primitive(
-			&doc, prim, out_path,
-			prim_i, rs^,
-			settings.lods, settings.opt,
-			settings.emit_skin,
-		)
-		if !per_res.ok {
-			result.message = per_res.message
-			return result
-		}
+		for prim_i in 0..<len(mesh.primitives) {
+			prim := &mesh.primitives[prim_i]
+			out_path := base
+			suffix := ""
+			if len(doc.meshes) > 1 {
+				suffix = fmt.tprintf("_m%d", mesh_i)
+			}
+			if len(mesh.primitives) > 1 {
+				suffix = fmt.tprintf("%s_p%d", suffix, prim_i)
+			}
+			if len(suffix) > 0 {
+				out_path = fmt.tprintf("%s%s%s", stem, suffix, ext)
+			}
 
-		converted_any = true
-		if per_res.stats.vertex_count > 0 {
-			best_stats = per_res.stats
+			per_res := convert_primitive(
+				&doc, prim, out_path,
+				prim_i, rs^,
+				settings.lods, settings.opt,
+				settings.emit_skin,
+			)
+			if !per_res.ok {
+				log.warnf("[asset_converter] mesh %d primitive %d failed: %s",
+					mesh_i, prim_i, per_res.message)
+				any_fail = true
+				failure_msg = per_res.message
+				continue
+			}
+
+			converted_any = true
+			if per_res.stats.vertex_count > 0 {
+				best_stats = per_res.stats
+			}
 		}
 	}
 
-	result.ok = converted_any
-	result.stats = best_stats
-	result.message = "ok"
+	if !converted_any {
+		result.ok = false
+		result.message = failure_msg if len(failure_msg) > 0 else "no meshes converted"
+		return result
+	}
+
+	result.ok         = !any_fail
+	result.stats      = best_stats
+	result.message    = "ok"
+	if any_fail do result.message = fmt.tprintf("partial: %s", failure_msg)
 	return result
 }
 
@@ -258,16 +285,26 @@ convert_primitive :: proc(
 	normals: [dynamic]f32
 	if nrm_idx >= 0 {
 		n, ok := read_accessor_f32_vec3(doc, nrm_idx)
-		if ok { normals = n } else { normals = make([dynamic]f32, len(positions), context.allocator) }
+		if ok {
+			normals = n
+		} else {
+			normals = make([dynamic]f32, len(positions), context.allocator)
+			for _, i in normals do normals[i] = 0
+		}
 	} else {
 		normals = make([dynamic]f32, len(positions), context.allocator)
+		for _, i in normals do normals[i] = 0
 	}
 	defer delete(normals)
 
 	uvs: [dynamic]f32
 	if uv_idx >= 0 {
 		u, ok := read_accessor_f32_vec2(doc, uv_idx)
-		if ok { uvs = u } else { uvs = make([dynamic]f32, len(positions) / 3 * 2, context.allocator) }
+		if ok {
+			uvs = u
+		} else {
+			uvs = make([dynamic]f32, len(positions) / 3 * 2, context.allocator)
+		}
 	} else {
 		uvs = make([dynamic]f32, len(positions) / 3 * 2, context.allocator)
 	}
@@ -276,7 +313,11 @@ convert_primitive :: proc(
 	tangents: [dynamic]f32
 	if tan_idx >= 0 {
 		t, ok := read_accessor_f32_vec4(doc, tan_idx)
-		if ok { tangents = t } else { tangents = make([dynamic]f32, len(positions) / 3 * 4, context.allocator) }
+		if ok {
+			tangents = t
+		} else {
+			tangents = make([dynamic]f32, len(positions) / 3 * 4, context.allocator)
+		}
 	} else {
 		tangents = make([dynamic]f32, len(positions) / 3 * 4, context.allocator)
 	}
@@ -362,22 +403,33 @@ read_accessor_f32_vec3 :: proc(doc: ^gltf.GLTF_Document, accessor_index: int) ->
 	if accessor_index < 0 || accessor_index >= len(doc.accessors) do return nil, false
 	acc := &doc.accessors[accessor_index]
 	if acc.type != .Vec3 {
-		log.warnf("[asset_converter] expected Vec3 accessor, got %v", acc.type)
+		log.warnf("[asset_converter] accessor %d: expected Vec3, got %v", accessor_index, acc.type)
 		return nil, false
 	}
 	raw := gltf.gltf_accessor_bytes(doc, accessor_index)
-	if len(raw) == 0 do return nil, false
-	// Handle non-FLOAT by casting/copying; v1 only supports FLOAT.
+	if len(raw) == 0 {
+		log.warnf("[asset_converter] accessor %d: 0 raw bytes (buffer_view=%d count=%d)",
+			accessor_index, acc.buffer_view, acc.count)
+		return nil, false
+	}
 	out := make([dynamic]f32, acc.count * 3, context.allocator)
 	switch acc.component_type {
 	case .FLOAT:
 		src := cast([^]f32)raw_data(raw)
-		copy(out[:], src[:acc.count * 3])
+		expected_bytes := acc.count * 3 * size_of(f32)
+		if len(raw) < expected_bytes {
+			log.warnf("[asset_converter] accessor %d: buffer truncated (%d/%d bytes)",
+				accessor_index, len(raw), expected_bytes)
+			available := len(raw) / size_of(f32)
+			copy(out[:], src[:available])
+		} else {
+			copy(out[:], src[:acc.count * 3])
+		}
 	case .UNSIGNED_SHORT:
 		src := cast([^]u16)raw_data(raw)
 		for i in 0..<acc.count * 3 do out[i] = f32(src[i]) / 65535.0
 	case .UNSIGNED_BYTE:
-		src := cast([^]u8)raw_data(raw)
+		src := raw_data(raw)
 		for i in 0..<acc.count * 3 do out[i] = f32(src[i]) / 255.0
 	case .SHORT:
 		src := cast([^]i16)raw_data(raw)
@@ -385,8 +437,12 @@ read_accessor_f32_vec3 :: proc(doc: ^gltf.GLTF_Document, accessor_index: int) ->
 	case .BYTE:
 		src := cast([^]i8)raw_data(raw)
 		for i in 0..<acc.count * 3 do out[i] = f32(src[i]) / 127.0
+	case .UNSIGNED_INT:
+		src := cast([^]u32)raw_data(raw)
+		for i in 0..<acc.count * 3 do out[i] = f32(src[i])
 	case:
-		log.warnf("[asset_converter] unsupported POSITION component type %v", acc.component_type)
+		log.warnf("[asset_converter] accessor %d: unsupported component type %v",
+			accessor_index, acc.component_type)
 		delete(out)
 		return nil, false
 	}
@@ -414,8 +470,17 @@ read_accessor_f32_vec2 :: proc(doc: ^gltf.GLTF_Document, accessor_index: int) ->
 		src := cast([^]u16)raw_data(raw)
 		for i in 0..<acc.count * 2 do out[i] = f32(src[i]) / 65535.0
 	case .UNSIGNED_BYTE:
-		src := cast([^]u8)raw_data(raw)
+		src := raw_data(raw)
 		for i in 0..<acc.count * 2 do out[i] = f32(src[i]) / 255.0
+	case .SHORT:
+		src := cast([^]i16)raw_data(raw)
+		for i in 0..<acc.count * 2 do out[i] = f32(src[i]) / 32767.0
+	case .BYTE:
+		src := cast([^]i8)raw_data(raw)
+		for i in 0..<acc.count * 2 do out[i] = f32(src[i]) / 127.0
+	case .UNSIGNED_INT:
+		src := cast([^]u32)raw_data(raw)
+		for i in 0..<acc.count * 2 do out[i] = f32(src[i])
 	case:
 		delete(out)
 		return nil, false
@@ -453,8 +518,19 @@ read_indices_u32 :: proc(doc: ^gltf.GLTF_Document, accessor_index: int) -> ([dyn
 		src := cast([^]u16)raw_data(raw)
 		for i in 0..<acc.count do out[i] = u32(src[i])
 	case .UNSIGNED_BYTE:
-		src := cast([^]u8)raw_data(raw)
+		src := raw_data(raw)
 		for i in 0..<acc.count do out[i] = u32(src[i])
+	case .SHORT:
+		src := cast([^]i16)raw_data(raw)
+		for i in 0..<acc.count do out[i] = u32(src[i])
+	case .BYTE:
+		src := cast([^]i8)raw_data(raw)
+		for i in 0..<acc.count do out[i] = u32(src[i])
+	case .FLOAT:
+		// Indices must be integer. Float components are an error.
+		log.warnf("[asset_converter] FLOAT component type not valid for indices")
+		delete(out)
+		return nil, false
 	case:
 		delete(out)
 		return nil, false

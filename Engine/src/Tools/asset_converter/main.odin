@@ -26,10 +26,8 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 
-import imgui "..\\..\\dependencies\\imgui"
-import Core   "..\\..\\Core"
-
-import sdl "vendor:sdl3"
+import imgui "../../dependencies/imgui"
+import Core   "../../Core"
 
 // ============================================================================
 // UI state (everything the modal needs)
@@ -85,11 +83,8 @@ init_app_state :: proc(s: ^App_State) {
 	s.source_path[0]    = 0
 	s.source_len        = 0
 
-	strings.copy(s.output_dir[:], "Project\\import\\meshes")
-	s.output_dir_len    = len("Project\\import\\meshes")
-
-	strings.copy(s.output_name[:], "mesh.bmesh")
-	s.output_name_len   = len("mesh.bmesh")
+	copy_to_fixed_buf("Project\\import\\meshes", &s.output_dir, &s.output_dir_len)
+	copy_to_fixed_buf("mesh.bmesh", &s.output_name, &s.output_name_len)
 
 	s.position_quant = rs.vertex_quantization.position
 	s.uv_quant       = rs.vertex_quantization.uv
@@ -220,6 +215,16 @@ index_format_cstring :: proc(f: Core.Index_Buffer_Format) -> cstring {
 main :: proc() {
 	context.logger = log.create_console_logger()
 
+	// -- headless CLI mode --
+	// If invoked with `-cli <source> <output>`, run the conversion
+	// directly and exit. Useful for scripted asset import / CI.
+	cli_source, cli_output, is_cli := parse_cli_args()
+	if is_cli {
+		run_cli(cli_source, cli_output)
+		return
+	}
+
+	// -- GUI mode --
 	ui: UI_State
 	init_err := ui_init(&ui, "Bifrost Asset Converter", 720, 760)
 	if init_err != .None {
@@ -241,6 +246,47 @@ main :: proc() {
 	}
 
 	fmt.println("Asset Converter exited cleanly.")
+}
+
+// parse_cli_args looks for `-cli <source.gltf> <output.bmesh>`.
+// Returns is_cli=true when the flag is present; the caller is responsible
+// for invoking run_cli with the resolved paths.
+parse_cli_args :: proc() -> (source, output: string, is_cli: bool) {
+	args := os.args[1:]
+	if len(args) < 3 do return "", "", false
+	if args[0] != "-cli" do return "", "", false
+	return args[1], args[2], true
+}
+
+// run_cli performs a single glTF -> .bmesh conversion with project-setting
+// defaults and prints a one-line summary to stdout.
+run_cli :: proc(source, output: string) {
+	Core.inject_default_project_settings()
+	rs := Core.renderer_settings_get()
+
+	settings := Conversion_Settings {
+		source_path = source,
+		output_path = output,
+		lods        = {}, // no extra LODs in CLI mode for v1
+		opt = Mesh_Opt_Options {
+			vertex_cache_reordering = rs.mesh_optimization.vertex_cache_reordering,
+			overdraw_threshold      = 0,
+		},
+		emit_skin = true,
+	}
+
+	res := convert_asset(settings)
+	if res.ok {
+		fmt.printfln("OK %s -> %s (vertices=%d triangles=%d)",
+			res.stats.vertex_count, res.stats.triangle_count,
+			res.stats.vertex_count, res.stats.triangle_count)
+		fmt.printfln("OK %s -> %s (%d verts, %d tris)",
+			source, res.output_path,
+			res.stats.vertex_count, res.stats.triangle_count)
+	} else {
+		fmt.eprintf("FAILED %s: %s\n", source, res.message)
+		os.exit(1)
+	}
 }
 
 // ============================================================================
@@ -396,7 +442,7 @@ run_conversion :: proc(app: ^App_State) {
 		generate_mips       = false,
 		max_texture_size    = 4096,
 		colour_space        = .Linear,
-		mesh_optimization   = Mesh_Optimization {
+		mesh_optimization   = Core.Mesh_Optimization {
 			vertex_cache_reordering = app.vertex_cache,
 			triangle_stripification = app.triangle_strips,
 		},

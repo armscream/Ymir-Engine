@@ -8,28 +8,23 @@
 //   - Engine/src/dependencies/imgui/backends/sdl3 (imgui_impl_sdl3)
 //
 // The ImGui static library (imgui_windows_x64.lib) is built once
-// from the vendored Dear ImGui sources via the project README
-// (`premake5 --backends=sdl3 vs2022` + `Build Solution`). The
-// resulting .lib lives at Engine/src/dependencies/imgui/.
+// from the vendored Dear ImGui sources via scripts/build_imgui.ps1.
 
 package asset_converter
 
-import "core:fmt"
 import "core:log"
-import "core:os"
 import sdl "vendor:sdl3"
 
-import imgui "..\\..\\dependencies\\imgui"
-import sdl3_imgui "..\\..\\dependencies\\imgui\\backends\\sdl3"
+import imgui "../../dependencies/imgui"
+import sdl3_imgui "../../dependencies/imgui/backends/sdl3"
 
 // ============================================================================
 // Window context
 // ============================================================================
 
 UI_State :: struct {
-	window:     ^sdl.Window,
-	renderer:   ^sdl.Renderer,
-	gl_ctx:     sdl.GLContext,
+	window:      ^sdl.Window,
+	gl_ctx:      sdl.GLContext,
 	should_quit: bool,
 }
 
@@ -43,28 +38,32 @@ UI_Init_Error :: enum {
 }
 
 ui_init :: proc(state: ^UI_State, title: cstring, w, h: i32) -> UI_Init_Error {
-	// -- SDL --
 	if !sdl.Init({.VIDEO}) {
 		log.errorf("SDL_Init failed: %s", sdl.GetError())
 		return .SDL_Init
 	}
-
-	sdl.SetAppMetadata("Bifrost Asset Converter", "0.1", "com.bifrost.asset_converter")
-
-	sdl.gl_set_attribute(.CONTEXT_PROFILE_MASK, i32(sdl.GL_CONTEXT_PROFILE_CORE))
-	sdl.gl_set_attribute(.CONTEXT_MAJOR_VERSION, 3)
-	sdl.gl_set_attribute(.CONTEXT_MINOR_VERSION, 3)
-
-	win_props: sdl.WindowProperties = {
-		title = title,
-		width = w,
-		height = h,
-		resizable = true,
-		opengl = true,
+	// SetAppMetadata returns a bool (require_results); the result is
+	// informational. We log warnings but don't bail.
+	if !sdl.SetAppMetadata("Bifrost Asset Converter", "0.1", "com.bifrost.asset_converter") {
+		log.warnf("SetAppMetadata returned false: %s", sdl.GetError())
 	}
-	state.window = sdl.CreateWindowWithProperties(win_props)
+
+	// OpenGL 3.3 core profile.
+	sdl.GL_SetAttribute(.CONTEXT_PROFILE_MASK, i32(sdl.GL_CONTEXT_PROFILE_CORE))
+	sdl.GL_SetAttribute(.CONTEXT_MAJOR_VERSION, 3)
+	sdl.GL_SetAttribute(.CONTEXT_MINOR_VERSION, 3)
+
+	// Create window via the properties API.
+	props := sdl.CreateProperties()
+	sdl.SetStringProperty(props, "title", title)
+	sdl.SetNumberProperty(props, "width",  i64(w))
+	sdl.SetNumberProperty(props, "height", i64(h))
+	if !sdl.SetBooleanProperty(props, "resizable", true) do log.warn("SetBooleanProperty(resizable) returned false")
+	if !sdl.SetBooleanProperty(props, "opengl",    true) do log.warn("SetBooleanProperty(opengl) returned false")
+
+	state.window = sdl.CreateWindowWithProperties(props)
 	if state.window == nil {
-		log.errorf("SDL_CreateWindow failed: %s", sdl.GetError())
+		log.errorf("CreateWindowWithProperties failed: %s", sdl.GetError())
 		sdl.Quit()
 		return .Window_Create
 	}
@@ -77,17 +76,17 @@ ui_init :: proc(state: ^UI_State, title: cstring, w, h: i32) -> UI_Init_Error {
 		return .GL_Create
 	}
 
-	sdl.GL_MakeCurrent(state.window, state.gl_ctx)
-	sdl.GL_SetSwapInterval(1) // vsync
+	if !sdl.GL_MakeCurrent(state.window, state.gl_ctx) {
+		log.warnf("GL_MakeCurrent returned false: %s", sdl.GetError())
+	}
+	sdl.GL_SetSwapInterval(1)
 
-	// -- ImGui --
 	imgui.CHECKVERSION()
 	imgui.CreateContext(nil)
 	io := imgui.GetIO()
 	io.ConfigFlags += {.DockingEnable, .NavEnableKeyboard}
 
-	style := imgui.GetStyle()
-	_ = style // default dark style for now
+	_ = imgui.GetStyle()
 
 	sdl3_imgui.InitForOpenGL(state.window, state.gl_ctx)
 	return .None
@@ -97,7 +96,7 @@ ui_shutdown :: proc(state: ^UI_State) {
 	sdl3_imgui.Shutdown()
 	imgui.DestroyContext(nil)
 	if state.gl_ctx != nil do sdl.GL_DestroyContext(state.gl_ctx)
-	if state.window != nil do sdl.DestroyWindow(state.window)
+	if state.window  != nil do sdl.DestroyWindow(state.window)
 	sdl.Quit()
 }
 
@@ -111,7 +110,7 @@ ui_pump_events :: proc(state: ^UI_State) -> bool {
 		case .WINDOW_CLOSE_REQUESTED:
 			return true
 		case .KEY_DOWN:
-			if e.key.key == .ESCAPE do return true
+			if e.key.key == sdl.Keycode(sdl.K_ESCAPE) do return true
 		}
 		sdl3_imgui.ProcessEvent(&e)
 	}

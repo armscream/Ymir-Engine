@@ -21,9 +21,7 @@
 package asset_converter
 
 import "core:c"
-import "core:fmt"
 import "core:log"
-import "core:mem"
 import "core:slice"
 
 import meshopt "../../dependencies/meshoptimizer"
@@ -94,7 +92,7 @@ optimize_mesh :: proc(
 		c.size_t(size_of(f32) * 3),
 	))
 
-	positions_buf = positions_buf[:new_vc * 3]
+	resize(&positions_buf, new_vc * 3)
 
 	// -- 3. optional overdraw reorder (operates on already cache-ordered indices) --
 	if options.overdraw_threshold > 0 {
@@ -110,7 +108,6 @@ optimize_mesh :: proc(
 			options.overdraw_threshold,
 		)
 		copy(indices[:], over[:])
-		delete(over)
 	}
 
 	// -- 4. optional stripification --

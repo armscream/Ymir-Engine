@@ -18,10 +18,8 @@
 
 package gltf
 
-import "base:runtime"
 import "core:fmt"
 import "core:log"
-import "core:os"
 import "core:strings"
 import cgltf "vendor:cgltf"
 
@@ -50,33 +48,58 @@ gltf_document_init :: proc(doc: ^GLTF_Document, allocator := context.allocator) 
 	doc.default_scene = -1
 }
 
-gltf_document_destroy :: proc(doc: ^GLTF_Document) {
+	gltf_document_destroy :: proc(doc: ^GLTF_Document) {
 	if doc == nil do return
+	delete(doc.asset.version)
+	delete(doc.asset.min_version)
+	delete(doc.asset.generator)
+	delete(doc.asset.copyright)
 	for &s in doc.scenes {
 		delete(s.nodes)
+		delete(s.name)
 	}
 	delete(doc.scenes)
 	for &n in doc.nodes {
 		delete(n.children)
+		delete(n.name)
 	}
 	delete(doc.nodes)
 	for &m in doc.meshes {
 		for &p in m.primitives {
+			for &a in p.attributes {
+				delete(a.key)
+			}
 			delete(p.attributes)
 		}
 		delete(m.primitives)
+		delete(m.name)
 	}
 	delete(doc.meshes)
+	for &mat in doc.materials {
+		delete(mat.name)
+	}
 	delete(doc.materials)
+	for &tex in doc.textures {
+		delete(tex.name)
+	}
 	delete(doc.textures)
 	delete(doc.samplers)
+	for &img in doc.images {
+		delete(img.uri)
+		delete(img.mime_type)
+		delete(img.name)
+	}
 	delete(doc.images)
 	delete(doc.accessors)
 	delete(doc.buffer_views)
+	for &b in doc.buffers {
+		delete(b.uri)
+	}
 	delete(doc.buffers)
 	for &a in doc.animations {
 		delete(a.channels)
 		delete(a.samplers)
+		delete(a.name)
 	}
 	delete(doc.animations)
 	if doc.cgltf_data != nil {
@@ -201,6 +224,28 @@ gltf_parse_file :: proc(
 	doc.cgltf_data = parsed
 	doc.source_format = parsed.file_type == .glb ? .GLB : .GLTF_JSON
 
+	// For .gltf JSON + external .bin, cgltf does NOT load the external
+	// buffers during parse_file. cgltf_load_buffers reads each buffer
+	// via the URI relative to `path` (or the inline base64 variant).
+	// GLBs already have their BIN chunk embedded -- load_buffers is a
+	// no-op for those.
+	if doc.source_format == .GLTF_JSON {
+		load_err := cgltf.load_buffers(opts, parsed, strings.unsafe_string_to_cstring(path))
+		if load_err != cgltf.result.success {
+			result.error   = .Parse_Failed
+			result.message = fmt.tprintf("cgltf.load_buffers failed: %v (path=%q)",
+				load_err, path)
+			gltf_document_destroy(doc)
+			cgltf.free(parsed)
+			return result
+		}
+		log.infof("[gltf] cgltf.load_buffers ok, %d buffers", len(parsed.buffers))
+		for &b, i in parsed.buffers {
+			log.infof("[gltf]   buffer %d: uri=%q size=%d data=%v",
+				i, b.uri == nil ? "<nil>" : string(b.uri), b.size, b.data != nil)
+		}
+	}
+
 	if err := gltf_translate(parsed, doc); err.error != .None {
 		gltf_document_destroy(doc)
 		cgltf.free(parsed)
@@ -220,22 +265,22 @@ gltf_translate :: proc(parsed: ^cgltf.data, doc: ^GLTF_Document) -> GLTF_Parse_R
 
 	//* asset
 	if parsed.asset.version != nil {
-		doc.asset.version = string(parsed.asset.version)
+		doc.asset.version = own_string(parsed.asset.version)
 	}
 	if parsed.asset.min_version != nil {
-		doc.asset.min_version = string(parsed.asset.min_version)
+		doc.asset.min_version = own_string(parsed.asset.min_version)
 	}
 	if parsed.asset.generator != nil {
-		doc.asset.generator = string(parsed.asset.generator)
+		doc.asset.generator = own_string(parsed.asset.generator)
 	}
 	if parsed.asset.copyright != nil {
-		doc.asset.copyright = string(parsed.asset.copyright)
+		doc.asset.copyright = own_string(parsed.asset.copyright)
 	}
 
 	//* buffers (record source / size; raw pointer exposed for read-only access)
 	for &b in parsed.buffers {
 		brec := GLTF_Buffer {
-			uri         = b.uri != nil ? string(b.uri) : "",
+			uri         = own_string(b.uri),
 			byte_length = int(b.size),
 		}
 		if b.data != nil && b.size > 0 {
@@ -246,8 +291,12 @@ gltf_translate :: proc(parsed: ^cgltf.data, doc: ^GLTF_Document) -> GLTF_Parse_R
 
 	//* buffer views (raw offset/size/target)
 	for &bv in parsed.buffer_views {
+		buf_idx: int = -1
+		if bv.buffer != nil {
+			buf_idx = int(cgltf.buffer_index(parsed, bv.buffer))
+		}
 		bvrec := GLTF_Buffer_View {
-			buffer      = int(cgltf.buffer_view_index(parsed, &bv)),
+			buffer      = buf_idx,
 			byte_offset = int(bv.offset),
 			byte_length = int(bv.size),
 			target      = int(bv.type),
@@ -261,8 +310,12 @@ gltf_translate :: proc(parsed: ^cgltf.data, doc: ^GLTF_Document) -> GLTF_Parse_R
 		if !ok do ct = .FLOAT
 		t, ok2 := cgltf_type_to(a.type)
 		if !ok2 do t = .Scalar
+		bv_idx: int = -1
+		if a.buffer_view != nil {
+			bv_idx = int(cgltf.buffer_view_index(parsed, a.buffer_view))
+		}
 		acc := GLTF_Accessor {
-			buffer_view    = int(cgltf.accessor_index(parsed, &a)),
+			buffer_view    = bv_idx,
 			byte_offset    = int(a.offset),
 			component_type = ct,
 			count          = int(a.count),
@@ -290,10 +343,10 @@ gltf_translate :: proc(parsed: ^cgltf.data, doc: ^GLTF_Document) -> GLTF_Parse_R
 			bv_idx = int(cgltf.buffer_view_index(parsed, img.buffer_view))
 		}
 		append(&doc.images, GLTF_Image {
-			uri         = img.uri != nil ? string(img.uri) : "",
-			mime_type   = img.mime_type != nil ? string(img.mime_type) : "",
+			uri         = own_string(img.uri),
+			mime_type   = own_string(img.mime_type),
 			buffer_view = bv_idx,
-			name        = img.name != nil ? string(img.name) : "",
+			name        = own_string(img.name),
 		})
 	}
 	for &t in parsed.textures {
@@ -308,14 +361,14 @@ gltf_translate :: proc(parsed: ^cgltf.data, doc: ^GLTF_Document) -> GLTF_Parse_R
 		append(&doc.textures, GLTF_Texture {
 			sampler = s_idx,
 			source  = img_idx,
-			name    = t.name != nil ? string(t.name) : "",
+			name    = own_string(t.name),
 		})
 	}
 
 	//* materials
 	for &m in parsed.materials {
 		mrec := GLTF_Material {
-			name           = m.name != nil ? string(m.name) : "",
+			name           = own_string(m.name),
 			double_sided   = bool(m.double_sided),
 			alpha_mode     = int(m.alpha_mode),
 			alpha_cutoff   = m.alpha_cutoff,
@@ -353,7 +406,7 @@ gltf_translate :: proc(parsed: ^cgltf.data, doc: ^GLTF_Document) -> GLTF_Parse_R
 	//* meshes
 	for &m in parsed.meshes {
 		mrec := GLTF_Mesh {
-			name = m.name != nil ? string(m.name) : "",
+			name = own_string(m.name),
 		}
 		for &p in m.primitives {
 			prec := GLTF_Primitive {
@@ -363,7 +416,7 @@ gltf_translate :: proc(parsed: ^cgltf.data, doc: ^GLTF_Document) -> GLTF_Parse_R
 			}
 			for &attr in p.attributes {
 				append(&prec.attributes, GLTF_Primitive_Attribute {
-					key      = attr.name != nil ? string(attr.name) : "",
+					key      = own_string(attr.name),
 					accessor = attr.data != nil ? int(cgltf.accessor_index(parsed, attr.data)) : -1,
 				})
 			}
@@ -375,7 +428,7 @@ gltf_translate :: proc(parsed: ^cgltf.data, doc: ^GLTF_Document) -> GLTF_Parse_R
 	//* nodes
 	for &n in parsed.nodes {
 		nrec := GLTF_Node {
-			name    = n.name != nil ? string(n.name) : "",
+			name    = own_string(n.name),
 			mesh    = n.mesh != nil ? int(cgltf.mesh_index(parsed, n.mesh)) : -1,
 			scale   = {1, 1, 1},
 			rotation = {0, 0, 0, 1},
@@ -405,7 +458,7 @@ gltf_translate :: proc(parsed: ^cgltf.data, doc: ^GLTF_Document) -> GLTF_Parse_R
 	//* scenes
 	for &s in parsed.scenes {
 		srec := GLTF_Scene {
-			name = s.name != nil ? string(s.name) : "",
+			name = own_string(s.name),
 		}
 		for &n in s.nodes {
 			append(&srec.nodes, n != nil ? int(cgltf.node_index(parsed, n)) : -1)
@@ -423,7 +476,7 @@ gltf_translate :: proc(parsed: ^cgltf.data, doc: ^GLTF_Document) -> GLTF_Parse_R
 	//* animations (used by asset_converter for animation quantization)
 	for &a in parsed.animations {
 		arec := GLTF_Animation {
-			name = a.name != nil ? string(a.name) : "",
+			name = own_string(a.name),
 		}
 		for &s in a.samplers {
 			append(&arec.samplers, GLTF_Animation_Sampler {
@@ -436,14 +489,12 @@ gltf_translate :: proc(parsed: ^cgltf.data, doc: ^GLTF_Document) -> GLTF_Parse_R
 			append(&arec.channels, GLTF_Animation_Channel {
 				target_node   = c.target_node != nil ? int(cgltf.node_index(parsed, c.target_node)) : -1,
 				target_path   = cgltf_animation_path_to(c.target_path),
-				sampler_index = int(cgltf.animation_sampler_index(&a, &c) if cgltf.animation_sampler_index != nil else cgltf_size(0)),
+				sampler_index = 0, // resolved below via pointer identity
 			})
 		}
-		// cgltf stores channels->sampler as a pointer; we resolve the
-		// sampler index via the channel's offset into the channel array
-		// since animation_sampler_index lookup helpers differ across
-		// versions. Use the sampler pointer identity via the channel
-		// array mapping (channels share samplers pool).
+		// cgltf stores channels->sampler as a pointer; resolve the
+		// sampler index by comparing pointer identity. (Channels and
+		// samplers both live inside the parent cgltf.data lifetime.)
 		for &c, ci in a.channels {
 			for &s, si in a.samplers {
 				if c.sampler == &s {
@@ -532,6 +583,16 @@ mem_byte_view :: #force_inline proc(p: rawptr, size: int) -> []byte {
 	return ([^]byte)(p)[:size]
 }
 
+// Copy a cgltf-owned cstring into an owned Odin string. The cstring
+// is freed by cgltf.free (called from gltf_document_destroy), so any
+// `string(cstring)` cast would otherwise leave non-owning views that
+// `delete` would corrupt.
+@(private)
+own_string :: proc(s: cstring, allocator := context.allocator) -> string {
+	if s == nil do return ""
+	return strings.clone(string(s), allocator)
+}
+
 // ============================================================================
 // Accessor helpers
 // ============================================================================
@@ -544,9 +605,12 @@ gltf_accessor_bytes :: proc(doc: ^GLTF_Document, accessor_index: int) -> []byte 
 	bv := &doc.buffer_views[acc.buffer_view]
 	if bv.buffer < 0 || bv.buffer >= len(doc.buffers) do return nil
 	buf := &doc.buffers[bv.buffer]
-	if bv.byte_offset + acc.byte_offset + bv.byte_length > len(buf.data) do return nil
 	offset := bv.byte_offset + acc.byte_offset
-	return buf.data[offset:offset + bv.byte_length]
+	if offset > len(buf.data) do return nil
+	available := len(buf.data) - offset
+	max_bytes := bv.byte_length
+	if max_bytes > available do max_bytes = available
+	return buf.data[offset:][:max_bytes]
 }
 
 gltf_accessor_component_size :: proc(acc: ^GLTF_Accessor) -> int {

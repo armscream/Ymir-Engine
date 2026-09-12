@@ -17,7 +17,6 @@
 package asset_converter
 
 import "core:fmt"
-import "core:io"
 import "core:log"
 import "core:mem"
 import "core:os"
@@ -87,11 +86,25 @@ write_bmesh :: proc(
 	// are taken as-is. A more complete implementation would pass a
 	// remap table into this function and reorder the attribute arrays.
 	for vi in 0..<vc {
-		p := base_positions[vi*3:][:3]
-		n := normals[vi*3:][:3] if vi*3+3 <= len(normals) else [3]f32{0, 0, 1}
-		t := tangents[vi*4:][:4] if vi*4+4 <= len(tangents) else [4]f32{1, 0, 0, 1}
-		u := uvs[vi*2:][:2] if vi*2+2 <= len(uvs) else [2]f32{0, 0}
-		write_vertex(&vw, ([3]f32)(p[:3]), n[0:3], t[0:3], u[0:2])
+		p_slice := base_positions[vi*3:][:3]
+		p3 := [3]f32{p_slice[0], p_slice[1], p_slice[2]}
+		n3 := [3]f32{0, 0, 1}
+		if vi*3+3 <= len(normals) {
+			slice := normals[vi*3:][:3]
+			n3 = {slice[0], slice[1], slice[2]}
+		}
+		t4 := [4]f32{1, 0, 0, 1}
+		if vi*4+4 <= len(tangents) {
+			slice := tangents[vi*4:][:4]
+			t4 = {slice[0], slice[1], slice[2], slice[3]}
+		}
+		t3 := [3]f32{t4[0], t4[1], t4[2]}
+		u2 := [2]f32{0, 0}
+		if vi*2+2 <= len(uvs) {
+			slice := uvs[vi*2:][:2]
+			u2 = {slice[0], slice[1]}
+		}
+		write_vertex(&vw, p3, n3, t3, u2)
 	}
 
 	vertices_data := vw.data[:]
@@ -105,7 +118,7 @@ write_bmesh :: proc(
 	)
 	defer delete(indices_data)
 	defer delete(lod_records)
-	if err != nil {
+	if len(err) > 0 {
 		return {false, err}
 	}
 
@@ -144,7 +157,7 @@ write_bmesh :: proc(
 	_ = mesh_off // reserved for future top-level mesh name lookup
 
 	// -- 6. open output file and write --
-	out, open_err := os.open(output_path, os.O_CREATE | os.O_TRUNC | os.O_WRONLY, 0o644)
+	out, open_err := os.open(output_path, {.Write, .Create, .Trunc})
 	if open_err != nil {
 		return {false, fmt.tprintf("open(%q): %v", output_path, open_err)}
 	}
@@ -183,7 +196,7 @@ write_bmesh :: proc(
 			return {false, fmt.tprintf("write section slot: %v", w_err)}
 		}
 	}
-	section_bodies_start := file_offset(out)
+	_ = file_offset(out)
 
 	// --- 6c. write each section in order, recording payload length ---
 	slot: int = 0
@@ -229,7 +242,7 @@ write_bmesh :: proc(
 
 	// 6. INDICES
 	sh[slot].id = BMESH_SECTION_INDICES
-	if w_err := write_bytes(out, indices_data); w_err != nil {
+	if w_err := write_bytes(out, indices_data[:]); w_err != nil {
 		return {false, fmt.tprintf("write INDICES: %v", w_err)}
 	}
 	sh[slot].length = u32(len(indices_data))
@@ -248,7 +261,7 @@ write_bmesh :: proc(
 	}
 
 	// --- 6d. patch the section headers with the recorded lengths ---
-	os.seek(out, i64(section_headers_start), io.Seek_Set)
+	os.seek(out, i64(section_headers_start), .Start)
 	for &s in sh {
 		if w_err := write_struct(out, &s); w_err != nil {
 			return {false, fmt.tprintf("patch section header: %v", w_err)}
@@ -331,12 +344,12 @@ flatten_lod_indices :: proc(
 				}
 				v: u16 = u16(x)
 				buf: [2]u8 = transmute([2]u8)v
-				append(&data, buf[:])
+				for b in buf do append(&data, b)
 			}
 		case .U32:
 			for x in idx {
 				buf: [4]u8 = transmute([4]u8)x
-				append(&data, buf[:])
+				for b in buf do append(&data, b)
 			}
 		}
 
@@ -356,30 +369,30 @@ flatten_lod_indices :: proc(
 // ============================================================================
 
 @(private)
-write_struct :: proc(h: os.Handle, s: ^$T) -> os.Error {
-	data := mem.bytes_from_ptr(s, size_of(T))
+write_struct :: proc(h: ^os.File, s: ^$T) -> os.Error {
+	data := mem.ptr_to_bytes(s, size_of(T))
 	_, err := os.write(h, data)
 	return err
 }
 
 @(private)
-write_struct_array :: proc(h: os.Handle, arr: []$T) -> os.Error {
+write_struct_array :: proc(h: ^os.File, arr: []$T) -> os.Error {
 	if len(arr) == 0 do return nil
-	data := mem.bytes_from_ptr(raw_data(arr), size_of(T) * len(arr))
+	data := mem.ptr_to_bytes(raw_data(arr), size_of(T) * len(arr))
 	_, err := os.write(h, data)
 	return err
 }
 
 @(private)
-write_bytes :: proc(h: os.Handle, b: []u8) -> os.Error {
+write_bytes :: proc(h: ^os.File, b: []u8) -> os.Error {
 	if len(b) == 0 do return nil
 	_, err := os.write(h, b)
 	return err
 }
 
 @(private)
-file_offset :: proc(h: os.Handle) -> int {
-	pos, err := os.seek(h, 0, io.Seek_Current{})
+file_offset :: proc(h: ^os.File) -> int {
+	pos, err := os.seek(h, 0, .Current)
 	if err != nil do return -1
 	return int(pos)
 }

@@ -6,3 +6,57 @@
 	path = Engine/src/dependencies/meshoptimizer
 	url = https://github.com/zeux/meshoptimizer.git
 	branch = master
+[submode "Engine/src/dependencies/odin-vma"]
+	path = Engine/src/dependencies/odin-vma
+	url = https://github.com/Capati/odin-vma.git
+	branch = main
+
+// TODO: Add submodule for ImGuizmo
+
+// Engine Core Modules
+[submodule "Engine/src/Modules/BF_Box3D_Physics"]
+	path = Engine/src/Modules/BF_Box3D_Physics
+	url = https://github.com/armscream/BF_Box3D_Physics.git
+	branch = main
+[submodule "Engine/src/Modules/BF_DAG"]
+	path = Engine/src/Modules/BF_DAG
+	url = https://github.com/armscream/BF_DAG.git
+	branch = main
+[submodule "Engine/src/Modules/BF_ECS"]
+	path = Engine/src/Modules/BF_ECS
+	url = https://github.com/armscream/BF_ECS.git
+	branch = main
+[submodule "Engine/src/Modules/BF_Editor"]
+	path = Engine/src/Modules/BF_Editor
+	url = https://github.com/armscream/BF_Editor.git
+	branch = main
+[submodule "Engine/src/Modules/BF_GPU"]
+	path = Engine/src/Modules/BF_GPU
+	url = https://github.com/armscream/BF_GPU.git
+	branch = main
+[submodule "Engine/src/Modules/BF_Input"]
+	path = Engine/src/Modules/BF_Input
+	url = https://github.com/armscream/BF_Input.git
+	branch = main
+[submodule "Engine/src/Modules/BF_MapDB"]
+	path = Engine/src/Modules/BF_MapDB
+	url = https://github.com/armscream/BF_MapDB.git
+	branch = main
+[submodule "Engine/src/Modules/BF_Miniaudio"]
+	path = Engine/src/Modules/BF_Miniaudio
+	url = https://github.com/armscream/BF_Miniaudio.git
+	branch = main
+[submodule "Engine/src/Modules/BF_REP"]
+	path = Engine/src/Modules/BF_REP
+	url = https://github.com/armscream/BF_REP.git
+	branch = main
+[submodule "Engine/src/Modules/BF_SDL3_GPU"]
+	path = Engine/src/Modules/BF_SDL3_GPU
+	url = https://github.com/armscream/BF_SDL3_GPU.git
+	branch = main
+
+// EXTENSIONS
+[submodule "Engine/src/Extensions/BF_GPU_Mesh"]
+	path = Engine/src/Extensions/BF_GPU_Mesh
+	url = https://github.com/armscream/BF_GPU_Mesh.git
+	branch = main
