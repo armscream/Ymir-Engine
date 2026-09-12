@@ -10,10 +10,6 @@
 	path = Engine/src/dependencies/odin-vma
 	url = https://github.com/Capati/odin-vma.git
 	branch = main
-
-// TODO: Add submodule for ImGuizmo
-
-// Engine Core Modules
 [submodule "Engine/src/Modules/BF_Box3D_Physics"]
 	path = Engine/src/Modules/BF_Box3D_Physics
 	url = https://github.com/armscream/BF_Box3D_Physics.git
@@ -37,11 +33,11 @@
 [submodule "Engine/src/Modules/BF_Input"]
 	path = Engine/src/Modules/BF_Input
 	url = https://github.com/armscream/BF_Input.git
-	branch = main
+	branch = master
 [submodule "Engine/src/Modules/BF_MapDB"]
 	path = Engine/src/Modules/BF_MapDB
 	url = https://github.com/armscream/BF_MapDB.git
-	branch = main
+	branch = master
 [submodule "Engine/src/Modules/BF_Miniaudio"]
 	path = Engine/src/Modules/BF_Miniaudio
 	url = https://github.com/armscream/BF_Miniaudio.git
@@ -54,8 +50,6 @@
 	path = Engine/src/Modules/BF_SDL3_GPU
 	url = https://github.com/armscream/BF_SDL3_GPU.git
 	branch = main
-
-// EXTENSIONS
 [submodule "Engine/src/Extensions/BF_GPU_Mesh"]
 	path = Engine/src/Extensions/BF_GPU_Mesh
 	url = https://github.com/armscream/BF_GPU_Mesh.git
